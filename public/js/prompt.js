@@ -1,6 +1,9 @@
 // Builds the chat-completion message list from the active preset, character, persona, lore and chat.
+import { messageId } from './message-ids.js';
 import { state, currentPersona, charName, userName, chatMetadata } from './state.js';
-import { substituteParams } from './macros.js';
+import { substituteParams, readVariable, variables } from './macros.js';
+import { evaluateCondition, modelMatches } from './conditions.js';
+import { points } from './rv-ext/points.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { scanWorldInfo } from './worldinfo.js';
 import { eventSource, event_types } from './events.js';
@@ -9,6 +12,9 @@ import { STRUCTURAL_MARKERS } from './presets.js';
 export const extension_prompt_types = { NONE: -1, IN_PROMPT: 0, IN_CHAT: 1, BEFORE_PROMPT: 2 };
 export const extension_prompt_roles = { SYSTEM: 0, USER: 1, ASSISTANT: 2 };
 export const extensionPrompts = {};
+let lastLoreHits = [];
+/** Lorebook entries activated by the most recent real (non-preview) prompt build. */
+export const lastLore = () => lastLoreHits;
 
 export function setExtensionPrompt(key, value, position = 0, depth = 4, scan = false, role = 0, filter = null) {
     extensionPrompts[key] = { value: String(value ?? ''), position: Number(position), depth: Number(depth), scan: !!scan, role: Number(role), filter };
@@ -36,6 +42,39 @@ function blockTriggered(block, type) {
     return trig.includes(type) || (type === 'swipe' && trig.includes('regenerate'));
 }
 
+/** The model profile (Reverie presets) that matches the active model, if any. */
+export function activeModelProfile(preset = state.preset) {
+    const model = state.settings.connection.model;
+    return (preset?.modelProfiles || []).find(p => p.enabled !== false && modelMatches(p.match, model)) || null;
+}
+
+/** Values preset conditions can test (see conditions.js). */
+export function conditionContext(type, history) {
+    const d = state.character?.card?.data ?? {};
+    return {
+        type,
+        model: state.settings.connection.model || '',
+        provider: state.settings.connection.provider || '',
+        chat: { length: history.length, last: history.at(-1)?.mes ?? '' },
+        char: { name: d.name ?? '', tags: d.tags ?? [] },
+        user: { name: userName() },
+        persona: { name: userName() },
+        var: { get: name => readVariable(name) },
+        global: { get: name => variables.global.get(name) },
+        profile: activeModelProfile()?.name ?? '',
+    };
+}
+
+function conditionMet(block, ctx) {
+    if (!block.when?.trim()) return true;
+    try {
+        return evaluateCondition(block.when, ctx);
+    } catch (err) {
+        console.warn(`[Reverie] Condition on "${block.name}" ignored: ${err.message}`);
+        return true;
+    }
+}
+
 function tagTriggered(block) {
     const tags = block.characterTagTrigger;
     if (!Array.isArray(tags) || !tags.length) return true;
@@ -61,6 +100,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     const history = chat.filter(m => !m.is_system);
     const lore = await scanWorldInfo(history, { contextTokens: contextSize });
     if (lore.activated.length) eventSource.emit(event_types.WORLD_INFO_ACTIVATED, lore.activated);
+    if (!dryRun) lastLoreHits = lore.activated;
 
     const before = [];
     const after = [];
@@ -82,8 +122,9 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
         if (ep.position === extension_prompt_types.BEFORE_PROMPT && ep.value) push(ROLE_NAMES[ep.role] || 'system', substituteParams(ep.value), `ext:${key}`);
     }
 
+    const condCtx = conditionContext(type, history);
     for (const block of preset.blocks) {
-        if (!block.enabled || !blockTriggered(block, type) || !tagTriggered(block)) continue;
+        if (!block.enabled || !blockTriggered(block, type) || !tagTriggered(block) || !conditionMet(block, condCtx)) continue;
         const role = block.role || 'system';
         const label = block.name;
         if (block.marker === 'chat_history') {
@@ -153,7 +194,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
         const depth = history.length - 1 - i;
         let content = applyRegex(m.mes ?? '', m.is_user ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT, { isPrompt: true, depth });
         if (names === 2) content = `${m.name}: ${content}`;
-        const out = { role: m.is_user ? 'user' : 'assistant', content };
+        const out = { role: m.is_user ? 'user' : 'assistant', content, __src: { id: messageId(m), index: chat.indexOf(m) } };
         if (names === 1 && m.name) out.name = m.name.replace(/[^\w-]/g, '_').slice(0, 64);
         return out;
     });
@@ -203,7 +244,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
             tail.push({ role: 'system', content: substituteParams(preset.behavior.continueNudge, { lastChatMessage: cont }) });
         }
     } else if (type === 'impersonate') {
-        tail.push({ role: 'system', content: substituteParams(preset.behavior.impersonationPrompt) });
+        tail.push({ role: 'system', content: substituteParams(quietPrompt || preset.behavior.impersonationPrompt) });
         prefill = substituteParams(preset.completion.assistantImpersonation);
     } else if (type === 'quiet') {
         if (quietPrompt) tail.push({ role: 'system', content: substituteParams(quietPrompt) });
@@ -211,7 +252,8 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
         if (lastMsg && !lastMsg.is_user && preset.behavior.sendIfEmpty?.trim()) {
             tail.push({ role: 'user', content: substituteParams(preset.behavior.sendIfEmpty) });
         }
-        prefill = substituteParams(preset.completion.assistantPrefill);
+        const profile = activeModelProfile(preset);
+        prefill = substituteParams(profile?.assistantPrefill ?? preset.completion.assistantPrefill);
     }
 
     if (!sawHistory) {
@@ -241,17 +283,31 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     messages = messages.filter(m => String(m.content).trim() || m === messages.at(-1));
 
+    // Reverie extension prompt hooks (rv.prompt.onBuild, Lumiverse interceptors). Hooks may add request params.
+    const extraParams = {};
+    for (const hook of points.promptHooks.list()) {
+        try {
+            const out = await hook(messages, { type, dryRun, chatLength: history.length, params: extraParams });
+            if (Array.isArray(out)) messages = out;
+        } catch (err) {
+            console.error('Extension prompt hook failed', err);
+        }
+    }
+
+    // Internal annotations (like __src) never reach the provider.
+    messages = messages.map(m => Object.fromEntries(Object.entries(m).filter(([k]) => !k.startsWith('__'))));
+
     const eventData = { chat: messages, dryRun };
     await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, eventData);
     messages = eventData.chat;
 
     const tokens = messages.reduce((n, m) => n + estimateTokens(m.content) + 4, 0);
     breakdown.push({ label: `Chat history (${kept.length} msgs${dropped ? `, ${dropped} trimmed` : ''})`, role: 'mixed', tokens: kept.reduce((n, m) => n + estimateTokens(m.content), 0) });
-    return { messages, breakdown, tokens, prefill, lore: lore.activated };
+    return { messages, breakdown, tokens, prefill, lore: lore.activated, extraParams };
 }
 
 export function samplerParams() {
-    const s = state.preset.samplers;
+    const s = { ...state.preset.samplers, ...(activeModelProfile()?.samplers || {}) };
     const params = {
         temperature: s.temperature,
         top_p: s.top_p,

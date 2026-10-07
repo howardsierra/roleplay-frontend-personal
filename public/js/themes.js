@@ -33,6 +33,43 @@ export const BUILTIN_THEMES = [
     },
     {
         ...base,
+        name: 'Rose Haven',
+        main_text_color: 'rgba(246, 228, 232, 1)',
+        italics_text_color: 'rgba(226, 170, 190, 1)',
+        underline_text_color: 'rgba(255, 196, 214, 1)',
+        quote_text_color: 'rgba(255, 255, 255, 1)',
+        blur_tint_color: 'rgba(58, 18, 34, 0.86)',
+        chat_tint_color: 'rgba(40, 10, 22, 0.4)',
+        user_mes_blur_tint_color: 'rgba(120, 40, 70, 0.34)',
+        bot_mes_blur_tint_color: 'rgba(66, 20, 38, 0.7)',
+        shadow_color: 'rgba(0, 0, 0, 0.3)',
+        shadow_width: 1,
+        border_color: 'rgba(244, 167, 196, 0.22)',
+        rv_bg: '#2a0b18',
+        rv_accent: '#e88aac',
+        rv_accent2: '#b0386a',
+        rv_aurora: ['#7a1f45', '#4a0f2a', '#8f2d55'],
+        chat_display: 'document',
+        custom_css: `
+:root { --rv-ui-font: 'Lora', Georgia, serif; --rv-blossom: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23f6a9c4' fill-opacity='.92'%3E%3Cpath id='p' d='M50 50C40 38 38 22 46 12c3 5 5 6 8 0 8 10 6 26-4 38z'/%3E%3Cuse href='%23p' transform='rotate(72 50 50)'/%3E%3Cuse href='%23p' transform='rotate(144 50 50)'/%3E%3Cuse href='%23p' transform='rotate(216 50 50)'/%3E%3Cuse href='%23p' transform='rotate(288 50 50)'/%3E%3C/g%3E%3Ccircle cx='50' cy='50' r='7' fill='%23ffe3ec'/%3E%3Cg fill='%23c2185b'%3E%3Ccircle cx='50' cy='40' r='1.8'/%3E%3Ccircle cx='59' cy='47' r='1.8'/%3E%3Ccircle cx='56' cy='58' r='1.8'/%3E%3Ccircle cx='44' cy='58' r='1.8'/%3E%3Ccircle cx='41' cy='47' r='1.8'/%3E%3C/g%3E%3C/svg%3E"); }
+.brand-title { font-style: italic; }
+.sidebar::after, .sheet-panel::after, #send_form::before {
+  content: ''; position: absolute; pointer-events: none; background-repeat: no-repeat; z-index: 0;
+  background-image: var(--rv-blossom), var(--rv-blossom), var(--rv-blossom), var(--rv-blossom);
+}
+.sidebar::after { left: -14px; bottom: -10px; width: 170px; height: 150px; opacity: .85;
+  background-size: 64px, 40px, 30px, 22px; background-position: 6px 70px, 60px 102px, 4px 30px, 92px 70px; }
+.sheet-panel::after { right: -10px; bottom: -12px; width: 150px; height: 120px; opacity: .8;
+  background-size: 56px, 34px, 24px, 18px; background-position: 88px 60px, 52px 86px, 112px 22px, 30px 98px; }
+#send_form { position: relative; }
+#send_form::before { left: -18px; top: -16px; width: 70px; height: 52px; opacity: .9;
+  background-size: 34px, 22px, 0, 0; background-position: 0 6px, 30px 0; }
+.sidebar-art img { filter: drop-shadow(0 10px 24px rgba(244, 114, 182, .35)); }
+#bg_layer::after { content: ''; position: absolute; inset: 0; opacity: .05; background-image: var(--rv-blossom); background-size: 120px; }
+`,
+    },
+    {
+        ...base,
         name: 'Moonlit Parchment',
         main_text_color: 'rgba(43, 37, 33, 1)',
         italics_text_color: 'rgba(118, 98, 80, 1)',
@@ -146,6 +183,7 @@ export function exportTheme(theme) {
 
 export function currentTheme() {
     const a = state.settings.appearance;
+    if (isReverieTheme(a.theme)) return resolveReverieTheme(a.theme);
     return a.theme || BUILTIN_THEMES.find(t => t.name === a.themeName) || BUILTIN_THEMES[0];
 }
 
@@ -161,8 +199,15 @@ function luminance(color) {
     return (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
 }
 
+let schemeWatch = null;
 export function applyTheme() {
     const t = currentTheme();
+    if (t.rv_fonts?.length) loadThemeFonts(t.rv_fonts);
+    // Re-apply when the system switches light/dark (for themes with both variants).
+    if (!schemeWatch && window.matchMedia) {
+        schemeWatch = window.matchMedia('(prefers-color-scheme: light)');
+        schemeWatch.addEventListener('change', () => applyTheme());
+    }
     const a = state.settings.appearance;
     const light = t.rv_light ?? luminance(t.blur_tint_color) > 0.6;
     const accent = t.rv_accent || t.quote_text_color || '#a78bfa';
@@ -218,7 +263,10 @@ export function applyTheme() {
 
     const cls = document.body.classList;
     for (const c of [...cls]) if (c.startsWith('chat-style-') || c.startsWith('avatar-style-')) cls.remove(c);
-    cls.add(`chat-style-${a.chatStyle || t.chat_display || 'cards'}`);
+    const classic = a.layout === 'classic';
+    cls.toggle('layout-classic', classic);
+    // In the classic layout, message styling is left to SillyTavern-style themes.
+    if (!classic) cls.add(`chat-style-${a.chatStyle || t.chat_display || 'cards'}`);
     cls.add(`avatar-style-${typeof t.avatar_style === 'number' && !a.avatarStyle ? AVATAR[t.avatar_style] : (a.avatarStyle || 'round')}`);
     cls.toggle('aurora-off', !a.aurora);
     cls.toggle('no-shadows', !t.shadow_width);
@@ -230,4 +278,101 @@ export function applyTheme() {
     document.body.classList.toggle('has-bg', !!bg);
 
     document.getElementById('custom-style').textContent = [t.custom_css || '', a.customCss || ''].join('\n');
+    window.dispatchEvent(new CustomEvent('rv:theme-applied'));
+}
+
+// =====================================================================
+// Reverie themes (.rvtheme.json)
+// One self-contained file: named colour tokens with optional light/dark variants, Google Fonts,
+// embedded assets (SVG/PNG data URIs exposed as CSS variables), layout preferences and CSS.
+// =====================================================================
+export const REVERIE_THEME_FORMAT = 'reverie-theme';
+
+const TOKEN_TO_ST = {
+    text: 'main_text_color', em: 'italics_text_color', quote: 'quote_text_color', underline: 'underline_text_color',
+    panel: 'blur_tint_color', chatTint: 'chat_tint_color', botMessage: 'bot_mes_blur_tint_color',
+    userMessage: 'user_mes_blur_tint_color', border: 'border_color', shadow: 'shadow_color',
+};
+
+export const isReverieTheme = t => t?.format === REVERIE_THEME_FORMAT;
+
+export function prefersLight() {
+    const pref = state.settings.appearance.colorScheme || 'auto';
+    if (pref === 'light') return true;
+    if (pref === 'dark') return false;
+    return globalThis.matchMedia?.('(prefers-color-scheme: light)').matches ?? false;
+}
+
+/** Resolve a Reverie theme (picking the light or dark variant) into the internal theme shape. */
+export function resolveReverieTheme(rt, light = prefersLight()) {
+    const variant = (light && rt.variants?.light) || rt.variants?.dark || rt.variants?.light || {};
+    const tokens = { ...(rt.tokens || {}), ...variant };
+    const out = { ...base, name: rt.name, rv_format: REVERIE_THEME_FORMAT, rv_light: variant === rt.variants?.light && !!rt.variants?.light };
+    for (const [k, st] of Object.entries(TOKEN_TO_ST)) if (tokens[k]) out[st] = tokens[k];
+    if (tokens.background) out.rv_bg = tokens.background;
+    if (tokens.accent) out.rv_accent = tokens.accent;
+    if (tokens.accent2) out.rv_accent2 = tokens.accent2;
+    if (Array.isArray(tokens.aurora)) out.rv_aurora = tokens.aurora;
+    if (Number.isFinite(rt.blur)) out.blur_strength = rt.blur;
+    if (Number.isFinite(rt.shadowWidth)) out.shadow_width = rt.shadowWidth;
+    if (rt.layout?.messageStyle) out.chat_display = rt.layout.messageStyle;
+    const vars = [];
+    for (const [name, uri] of Object.entries(rt.assets || {})) {
+        if (/^[\w-]+$/.test(name) && /^(data:|https:)/.test(String(uri))) vars.push(`--rv-asset-${name}: url("${String(uri).replace(/"/g, '%22')}");`);
+    }
+    const fonts = rt.fonts || {};
+    const fontStack = (f, fallback) => (f ? `'${String(f).replace(/'/g, '')}', ${fallback}` : null);
+    if (fonts.ui) vars.push(`--rv-ui-font: ${fontStack(fonts.ui, 'system-ui, sans-serif')};`);
+    if (fonts.chat) vars.push(`--rv-chat-font: ${fontStack(fonts.chat, 'Georgia, serif')};`);
+    if (fonts.heading) vars.push(`--rv-heading-font: ${fontStack(fonts.heading, 'Georgia, serif')};`);
+    if (Number.isFinite(rt.radius)) vars.push(`--rv-radius: ${rt.radius}px; --rv-radius-sm: ${Math.round(rt.radius * 0.66)}px;`);
+    out.custom_css = `${vars.length ? `:root { ${vars.join(' ')} }\n` : ''}${rt.css || ''}`;
+    out.rv_fonts = [fonts.ui, fonts.chat, fonts.heading].filter(Boolean);
+    return out;
+}
+
+/** Load Google Fonts a theme names (once each). */
+export function loadThemeFonts(names = []) {
+    for (const name of names) {
+        const id = `rv-font-${String(name).replace(/\W+/g, '-').toLowerCase()}`;
+        if (document.getElementById(id)) continue;
+        const link = document.createElement('link');
+        link.id = id;
+        link.rel = 'stylesheet';
+        link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(name).replace(/%20/g, '+')}:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap`;
+        document.head.append(link);
+    }
+}
+
+/** Build a Reverie theme from an internal/ST theme (used for "Save as Reverie theme"). */
+export function toReverieTheme(theme, extra = {}) {
+    const tokens = {};
+    for (const [k, st] of Object.entries(TOKEN_TO_ST)) if (theme[st]) tokens[k] = theme[st];
+    if (theme.rv_bg) tokens.background = theme.rv_bg;
+    if (theme.rv_accent) tokens.accent = theme.rv_accent;
+    if (theme.rv_accent2) tokens.accent2 = theme.rv_accent2;
+    if (theme.rv_aurora) tokens.aurora = theme.rv_aurora;
+    const a = state.settings.appearance;
+    return {
+        format: REVERIE_THEME_FORMAT,
+        formatVersion: 1,
+        name: theme.name,
+        author: '',
+        version: '1.0',
+        description: '',
+        variants: { [theme.rv_light ? 'light' : 'dark']: tokens },
+        fonts: {},
+        blur: theme.blur_strength ?? 14,
+        shadowWidth: theme.shadow_width ?? 2,
+        layout: { messageStyle: a.chatStyle, avatars: a.avatarStyle, layout: a.layout || 'reverie' },
+        assets: {},
+        css: [theme.custom_css, a.customCss].filter(Boolean).join('\n'),
+        ...extra,
+    };
+}
+
+/** SillyTavern export of a Reverie theme (picks the dark variant; assets/fonts go into custom_css). */
+export function reverieToSillyTavern(rt) {
+    const t = resolveReverieTheme(rt, false);
+    return exportTheme(t);
 }

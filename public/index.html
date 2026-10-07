@@ -15,10 +15,18 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,600;1,400&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=JetBrains+Mono:wght@400;600&display=swap">
     <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+    <link rel="stylesheet" href="css/st-vars.css">
     <link rel="stylesheet" href="css/app.css">
     <style id="rv-theme-vars"></style>
     <style id="custom-style"></style>
     <script src="vendor/jquery.js"></script>
+    <!-- Libraries SillyTavern provides globally; extensions rely on them. -->
+    <script src="vendor/lodash.js" defer></script>
+    <script src="vendor/handlebars.js" defer></script>
+    <script src="vendor/moment.js" defer></script>
+    <script src="vendor/localforage.js" defer></script>
+    <script src="vendor/showdown.js" defer></script>
+    <script src="vendor/popper.js" defer></script>
 </head>
 <body class="no-character">
     <div id="bg_layer" aria-hidden="true"><div id="bg_image"></div><div id="bg_aurora"></div></div>
@@ -26,23 +34,26 @@
     <div id="app">
         <!-- ============ Top bar ============ -->
         <header id="top-bar">
-            <button class="icon-btn" id="btn-library" title="Characters"><i class="fa-solid fa-users"></i></button>
-            <button id="chat-title" class="chat-title" title="Chats with this character">
-                <img id="chat-title-avatar" alt="">
-                <span class="chat-title-text">
-                    <span id="chat-title-name">Reverie</span>
-                    <span id="chat-title-sub">Pick a character to begin</span>
-                </span>
-                <i class="fa-solid fa-chevron-down chat-title-caret"></i>
-            </button>
-            <div class="top-actions">
-                <button class="icon-btn" id="btn-gallery" title="Image gallery"><i class="fa-regular fa-images"></i></button>
-                <button class="icon-btn" id="btn-settings" title="Settings"><i class="fa-solid fa-sliders"></i></button>
+            <div id="top-settings-holder">
+                <button class="icon-btn" id="btn-library" title="Characters"><i class="fa-solid fa-users"></i></button>
+                <button id="chat-title" class="chat-title" title="Chats with this character">
+                    <img id="chat-title-avatar" alt="">
+                    <span class="chat-title-text">
+                        <span id="chat-title-name">Reverie</span>
+                        <span id="chat-title-sub">Pick a character to begin</span>
+                    </span>
+                    <i class="fa-solid fa-chevron-down chat-title-caret"></i>
+                </button>
+                <div class="top-actions">
+                    <button class="icon-btn" id="btn-sheet" title="Character sheet"><i class="fa-regular fa-id-card"></i></button>
+                    <button class="icon-btn" id="btn-gallery" title="Image gallery"><i class="fa-regular fa-images"></i></button>
+                    <button class="icon-btn" id="btn-settings" title="Settings"><i class="fa-solid fa-sliders"></i></button>
+                </div>
             </div>
         </header>
 
         <!-- ============ Main stage ============ -->
-        <main id="sheld">
+        <main id="sheld" class="rv-chatColumnInner">
             <section id="home" class="home">
                 <div class="home-hero">
                     <div class="home-mark">✦</div>
@@ -59,18 +70,35 @@
                 </div>
             </section>
 
+            <div id="chat-toolbar" class="chat-toolbar rv-chatToolbar">
+                <label class="tb-preset" title="Active preset"><i class="fa-solid fa-sliders"></i><select id="quick-preset"></select></label>
+                <div class="tb-search">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input id="chat-search" type="search" placeholder="Search this chat…" autocomplete="off">
+                    <span id="chat-search-count" class="tb-count"></span>
+                    <kbd class="tb-kbd">Ctrl K</kbd>
+                </div>
+                <button class="icon-btn small" id="btn-rename-chat" title="Rename this chat"><i class="fa-solid fa-pen"></i></button>
+                <span id="gen-status" class="gen-status" title="Status"><span class="dot"></span><span class="label">Idle</span></span>
+            </div>
+
             <div id="chat" class="chat" role="log" aria-live="polite"></div>
 
             <div id="form_sheld">
                 <div id="typing-indicator" class="typing-indicator hidden"><span></span><span></span><span></span></div>
                 <div id="send_form" class="send-form">
                     <div id="attachment-tray" class="attachment-tray hidden"></div>
-                    <div class="send-row">
-                        <button class="icon-btn" id="options_button" title="Actions"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
-                        <textarea id="send_textarea" rows="1" placeholder="Write your message…" autocomplete="off" enterkeyhint="send"></textarea>
-                        <button class="icon-btn" id="btn-continue" title="Continue last message"><i class="fa-solid fa-forward"></i></button>
-                        <button id="send_but" class="send-btn" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
-                        <button id="mes_stop" class="send-btn stop hidden" title="Stop"><i class="fa-solid fa-stop"></i></button>
+                    <div id="nonQRFormItems" class="send-row">
+                        <div id="leftSendForm" class="send-side">
+                            <button class="icon-btn" id="options_button" title="Actions"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
+                            <div id="extensionsMenuButton" class="hidden"></div>
+                        </div>
+                        <textarea id="send_textarea" rows="1" placeholder="Write your next chapter…" autocomplete="off" enterkeyhint="send"></textarea>
+                        <div id="rightSendForm" class="send-side">
+                            <button class="icon-btn" id="btn-continue" title="Continue last message"><i class="fa-solid fa-forward"></i></button>
+                            <button id="send_but" class="send-btn" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
+                            <button id="mes_stop" class="send-btn stop hidden" title="Stop"><i class="fa-solid fa-stop"></i></button>
+                        </div>
                     </div>
                 </div>
                 <div id="extensionsMenu" class="popover-menu hidden" role="menu">
@@ -81,18 +109,49 @@
         </main>
     </div>
 
-    <!-- ============ Character library drawer ============ -->
-    <aside id="left-nav-panel" class="drawer drawer-left" aria-hidden="true">
-        <div class="drawer-head">
-            <h2>Characters</h2>
-            <div class="drawer-head-actions">
-                <button class="icon-btn" data-action="import-character" title="Import (PNG / JSON)"><i class="fa-solid fa-file-import"></i></button>
-                <button class="icon-btn" data-action="create-character" title="Create"><i class="fa-solid fa-plus"></i></button>
-                <button class="icon-btn drawer-close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+    <!-- ============ Story sidebar (drawer on phones, docked on wide screens) ============ -->
+    <aside id="left-nav-panel" class="drawer drawer-left sidebar" aria-hidden="true">
+        <div class="sidebar-brand">
+            <div class="brand-text">
+                <div id="brand-title" class="brand-title">Reverie</div>
+                <div id="brand-tagline" class="brand-tagline">where stories begin</div>
             </div>
+            <button class="icon-btn drawer-close" title="Close"><i class="fa-solid fa-xmark"></i></button>
         </div>
-        <div class="search-wrap"><i class="fa-solid fa-magnifying-glass"></i><input id="char-search" type="search" placeholder="Search characters or tags"></div>
-        <div id="rm_print_characters_block" class="char-list"></div>
+        <button class="btn primary new-story" data-action="new-story"><i class="fa-solid fa-feather-pointed"></i> New story</button>
+        <div class="sidebar-scroll">
+            <div class="sidebar-label">Recent stories</div>
+            <div id="recent-stories" class="recent-stories"></div>
+            <div class="sidebar-label">Library</div>
+            <nav class="sidebar-nav">
+                <details id="nav-characters" class="nav-group">
+                    <summary class="nav-item"><i class="fa-solid fa-users"></i><span>Characters</span><span class="nav-actions">
+                        <span class="icon-btn small" data-action="import-character" title="Import (PNG / JSON)"><i class="fa-solid fa-file-import"></i></span>
+                        <span class="icon-btn small" data-action="create-character" title="Create"><i class="fa-solid fa-plus"></i></span>
+                    </span><i class="fa-solid fa-chevron-down nav-caret"></i></summary>
+                    <div class="search-wrap"><i class="fa-solid fa-magnifying-glass"></i><input id="char-search" type="search" placeholder="Search characters or tags"></div>
+                    <div id="rm_print_characters_block" class="char-list"></div>
+                </details>
+                <button class="nav-item" data-action="open-settings" data-tab="persona"><i class="fa-solid fa-user-astronaut"></i><span>Personas</span></button>
+                <button class="nav-item" data-action="open-settings" data-tab="lore"><i class="fa-solid fa-book-atlas"></i><span>Lorebooks</span></button>
+                <button class="nav-item" data-action="open-settings" data-tab="preset"><i class="fa-solid fa-sliders"></i><span>Presets</span></button>
+                <button class="nav-item" data-action="gallery"><i class="fa-regular fa-images"></i><span>Gallery</span></button>
+                <button class="nav-item" data-action="open-settings" data-tab="connection"><i class="fa-solid fa-plug"></i><span>Connections &amp; settings</span></button>
+            </nav>
+        </div>
+        <figure id="sidebar-art" class="sidebar-art hidden"><img alt=""><figcaption></figcaption></figure>
+    </aside>
+
+    <!-- ============ Character sheet ============ -->
+    <aside id="sheet-panel" class="drawer drawer-right sheet-panel" aria-hidden="true">
+        <nav class="tabs sheet-tabs" id="sheet-tabs">
+            <button class="tab active" data-tab="character">Character</button>
+            <button class="tab" data-tab="lore">Lore</button>
+            <button class="tab" data-tab="scene">Scene</button>
+            <span class="grow"></span>
+            <button class="icon-btn drawer-close sheet-close" title="Close"><i class="fa-solid fa-xmark"></i></button>
+        </nav>
+        <div id="sheet-body" class="sheet-body"></div>
     </aside>
 
     <!-- ============ Settings drawer ============ -->
@@ -111,6 +170,42 @@
             <div id="extensions_settings2" class="extension_settings_column"></div>
         </div>
     </aside>
+
+    <!-- SillyTavern-compatible hosts that extensions look for -->
+    <div id="movingDivs"></div>
+    <!-- Lumiverse extensions read theme variables from #root -->
+    <div id="root" hidden></div>
+    <template id="generic_draggable_template">
+        <div class="draggable">
+            <div class="dragTitle"></div>
+            <div class="panelControlBar flex-container">
+                <div class="fa-fw fa-solid fa-grip drag-grabber"></div>
+                <div class="fa-fw fa-solid fa-circle-xmark dragClose"></div>
+            </div>
+        </div>
+    </template>
+    <div id="st-dom" hidden>
+        <div id="FontBlurChatWidthBlock" name="FontBlurChatWidthBlock" data-st-park></div>
+        <div id="CustomCSS-block" data-st-park>
+            <h4 class="st-block-title">Custom CSS</h4>
+            <textarea id="customCSS" class="text_pole input mono" rows="8" spellcheck="false" placeholder="/* SillyTavern selectors like .mes, .mes_text, #chat, #send_form work here */"></textarea>
+        </div>
+        <div id="rm_api_block">
+            <select id="main_api"><option value="openai" selected>Chat Completion</option></select>
+            <select id="chat_completion_source"></select>
+            <select id="connection_profiles"></select>
+        </div>
+        <div id="options">
+            <a id="option_select_chat"></a><a id="option_start_new_chat"></a><a id="option_close_chat"></a>
+            <a id="option_impersonate"></a><a id="option_continue"></a><a id="option_regenerate"></a>
+        </div>
+        <div id="openai_settings">
+            <input id="temp_openai" type="number"><input id="top_p_openai" type="number"><input id="top_k_openai" type="number">
+            <input id="min_p_openai" type="number"><input id="freq_pen_openai" type="number"><input id="pres_pen_openai" type="number">
+            <input id="repetition_penalty_openai" type="number"><input id="openai_max_tokens" type="number"><input id="openai_max_context" type="number">
+            <input id="seed_openai" type="number">
+        </div>
+    </div>
 
     <div id="scrim" class="scrim"></div>
     <div id="toast-container" class="toast-container"></div>

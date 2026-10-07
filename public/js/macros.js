@@ -121,6 +121,12 @@ function presetVar(name, defaultsOnly = false) {
     return '';
 }
 
+/** Chat variable if set, otherwise the preset's prompt variable (used by preset conditions). */
+export function readVariable(name) {
+    if (variables.local.has(name)) return variables.local.get(name);
+    return presetVar(name);
+}
+
 function presetVarIsOn(name, keys) {
     const preset = state.preset;
     for (const block of preset?.blocks || []) {

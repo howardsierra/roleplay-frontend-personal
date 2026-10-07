@@ -5,6 +5,7 @@ import DOMPurify from '../vendor/purify.js';
 import { state } from './state.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { escapeHtml } from './ui.js';
+import { rendererFor } from './rv-ext/points.js';
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -14,14 +15,23 @@ const RAW_DOC = /<!doctype html[\s\S]*?<\/html>|<html[\s>][\s\S]*?<\/html>/gi;
 const PIC_TAGS = /<pic\s+prompt\s*=\s*(["'])([\s\S]*?)\1\s*\/?>(?:\s*<\/pic>)?|\[(?:img|pic|image)\s*:\s*([^\]]+)\]|<img\s+prompt\s*=\s*(["'])([\s\S]*?)\4[^>]*>/gi;
 
 let scopeCounter = 0;
+const LANG_ALIASES = { js: 'javascript', mjs: 'javascript', jsx: 'javascript', ts: 'typescript', py: 'python', sh: 'bash', shell: 'bash', yml: 'yaml', md: 'markdown', stsc: 'stscript' };
+
+/** Display filters run on message text before markdown (used for Lumiverse tag interceptors). */
+export const displayFilters = new Set(); // fn(text, { isUser, streaming, message, id }) -> text
 
 /**
  * @returns {{ html: string, widgets: Array<{kind, code}>, pics: string[], wholeDoc: boolean }}
  */
-export function formatMessage(text, { isUser = false, depth, streaming = false, isReasoning = false } = {}) {
+export function formatMessage(text, { isUser = false, depth, streaming = false, isReasoning = false, message = null, id = null } = {}) {
     const widgets = [];
     const pics = [];
     let src = applyRegex(String(text ?? ''), isReasoning ? REGEX_PLACEMENT.REASONING : (isUser ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT), { isMarkdown: true, depth });
+    if (!isReasoning) {
+        for (const filter of displayFilters) {
+            try { src = filter(src, { isUser, streaming, message, id }) ?? src; } catch (err) { console.error('Display filter failed', err); }
+        }
+    }
     const render = state.settings.render;
 
     if (state.settings.image.inlineTags) {
@@ -34,6 +44,11 @@ export function formatMessage(text, { isUser = false, depth, streaming = false, 
     if (render.html) {
         src = src.replace(FENCE, (match, lead, _fence, langRaw, code) => {
             const lang = String(langRaw || '').trim().toLowerCase();
+            // Reverie extensions can render their own fenced blocks natively.
+            if (lang && rendererFor(lang)) {
+                widgets.push({ kind: 'ext', lang, code });
+                return `${lead}\n<rv-widget data-i="${widgets.length - 1}"></rv-widget>\n`;
+            }
             if (/^(python|py|python3|pyodide)$/.test(lang) && render.python !== 'off') {
                 widgets.push({ kind: 'python', code });
                 return `${lead}\n<rv-widget data-i="${widgets.length - 1}"></rv-widget>\n`;
@@ -65,7 +80,8 @@ export function formatMessage(text, { isUser = false, depth, streaming = false, 
         FORCE_BODY: true,
         ADD_TAGS: ['style', 'rv-widget', 'rv-pic', 'q', 'details', 'summary', 'audio', 'video', 'source', 'font', 'center'],
         ADD_ATTR: ['data-i', 'target', 'controls', 'autoplay', 'loop', 'muted', 'playsinline', 'open', 'color', 'face', 'size', 'align'],
-        FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button', 'link', 'meta', 'base'],
+        // Like SillyTavern, keep buttons / inputs / selects (extensions such as Clickable Inputs use them); event handlers are still stripped.
+        FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'link', 'meta', 'base'],
         FORBID_ATTR: ['srcdoc'],
     });
     return { html, widgets, pics, wholeDoc };
@@ -79,6 +95,14 @@ export function hydrate(container, result, { streaming = false, onPic, message }
         style.textContent = `@scope ([data-rvscope="${scope}"]) {\n${style.textContent}\n}`;
     }
     if (state.settings.render.quotes) highlightQuotes(container);
+    // Canonical language classes, as SillyTavern's highlighter produces (extensions match on them).
+    for (const code of container.querySelectorAll('pre code[class*="language-"]')) {
+        const lang = code.className.match(/language-([\w+#-]+)/)?.[1]?.toLowerCase();
+        const canonical = LANG_ALIASES[lang];
+        if (canonical) code.classList.add(`language-${canonical}`);
+        if (lang && code.parentElement?.tagName === 'PRE') code.parentElement.dataset.codeLang = lang;
+        code.classList.add('hljs');
+    }
     for (const a of container.querySelectorAll('a[href]')) {
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
@@ -91,12 +115,30 @@ export function hydrate(container, result, { streaming = false, onPic, message }
             node.replaceWith(buildingPlaceholder(widget.kind));
             continue;
         }
+        if (widget.kind === 'ext') {
+            node.replaceWith(extensionBlock(widget, message));
+            continue;
+        }
         node.replaceWith(widget.kind === 'python' ? pythonWidget(widget.code) : htmlWidget(widget.code, { whole: widget.whole }));
     }
     for (const node of container.querySelectorAll('rv-pic')) {
         const prompt = result.pics[Number(node.dataset.i)] || '';
         node.replaceWith(picWidget(prompt, message, { streaming, onPic }));
     }
+}
+
+function extensionBlock(widget, message) {
+    const div = document.createElement('div');
+    div.className = `rv-ext-block rv-ext-${widget.lang.replace(/[^\w-]/g, '')}`;
+    const renderer = rendererFor(widget.lang);
+    try {
+        renderer.render(widget.code, div, { message: message ? { name: message.name, text: message.mes, isUser: !!message.is_user } : null });
+    } catch (err) {
+        div.classList.add('error');
+        div.textContent = `${widget.lang}: ${err.message}`;
+        console.error(`Renderer for ${widget.lang} failed`, err);
+    }
+    return div;
 }
 
 function buildingPlaceholder(kind) {
@@ -237,27 +279,13 @@ export function htmlWidget(code, { whole = false } = {}) {
     iframe.setAttribute('loading', 'lazy');
     iframe.style.height = whole ? '60px' : '48px';
     iframe.srcdoc = frameDocument(code, { whole });
+    wrap.dataset.code = code;
     frames.set(id, iframe);
     wrap.append(iframe);
     if (!whole) {
         const bar = document.createElement('div');
         bar.className = 'rv-frame-bar';
         bar.innerHTML = '<button class="mini-btn" data-act="reload" title="Restart"><i class="fa-solid fa-rotate-right"></i></button><button class="mini-btn" data-act="source" title="View source"><i class="fa-solid fa-code"></i></button><button class="mini-btn" data-act="full" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>';
-        bar.addEventListener('click', e => {
-            const act = e.target.closest('[data-act]')?.dataset.act;
-            if (act === 'reload') iframe.srcdoc = frameDocument(code);
-            if (act === 'full') wrap.classList.toggle('fullscreen');
-            if (act === 'source') {
-                const pre = wrap.querySelector('pre.rv-source');
-                if (pre) pre.remove();
-                else {
-                    const p = document.createElement('pre');
-                    p.className = 'rv-source';
-                    p.textContent = code;
-                    wrap.append(p);
-                }
-            }
-        });
         wrap.prepend(bar);
     }
     return wrap;
@@ -312,7 +340,7 @@ function picWidget(prompt, message, { streaming, onPic }) {
         wrap.append(img);
         const cap = document.createElement('figcaption');
         cap.innerHTML = '<button class="mini-btn" data-act="regen" title="Regenerate"><i class="fa-solid fa-rotate"></i></button>';
-        cap.querySelector('button').addEventListener('click', () => onPic?.(prompt, true));
+        cap.querySelector('button').dataset.prompt = prompt;
         wrap.append(cap);
         return wrap;
     }
@@ -321,7 +349,7 @@ function picWidget(prompt, message, { streaming, onPic }) {
     wrap.innerHTML = `<div class="rv-pic-shimmer"></div><figcaption><span class="rv-pic-prompt"></span><button class="mini-btn" data-act="gen"><i class="fa-solid fa-wand-magic-sparkles"></i> ${pending ? 'Painting…' : 'Generate'}</button></figcaption>`;
     wrap.querySelector('.rv-pic-prompt').textContent = prompt;
     if (pending || streaming) wrap.classList.add('busy');
-    wrap.querySelector('[data-act="gen"]').addEventListener('click', () => onPic?.(prompt, false));
+    wrap.querySelector('[data-act="gen"]').dataset.prompt = prompt;
     return wrap;
 }
 
@@ -334,7 +362,12 @@ export function setFrameRpcHandler(fn) {
 window.addEventListener('message', async e => {
     const data = e.data;
     if (!data || typeof data !== 'object' || !data.rvFrame) return;
-    const iframe = frames.get(data.rvFrame);
+    // Frames re-inserted as HTML by extensions (messageFormatting) are found by name.
+    let iframe = frames.get(data.rvFrame);
+    if (!iframe || !iframe.isConnected) {
+        iframe = document.querySelector(`iframe.rv-frame[name="${CSS.escape(data.rvFrame)}"]`);
+        if (iframe) frames.set(data.rvFrame, iframe);
+    }
     if (!iframe || iframe.contentWindow !== e.source) return;
     if (!iframe.isConnected) {
         frames.delete(data.rvFrame);
@@ -356,6 +389,43 @@ window.addEventListener('message', async e => {
         } catch { /* frame gone */ }
     }
 });
+
+// Delegated handlers, so widgets keep working when extensions re-insert message HTML.
+document.addEventListener('click', e => {
+    const btn = e.target.closest('.rv-frame-bar [data-act], .rv-pic [data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === 'gen' || act === 'regen') {
+        const id = Number(btn.closest('.mes')?.getAttribute('mesid'));
+        if (Number.isFinite(id)) import('./imagegen.js').then(m => m.generateInlinePic(id, btn.dataset.prompt, act === 'regen'));
+        return;
+    }
+    const wrap = btn.closest('.rv-frame-wrap');
+    const code = wrap?.dataset.code ?? '';
+    const iframe = wrap?.querySelector('iframe.rv-frame');
+    if (act === 'reload' && iframe) iframe.srcdoc = frameDocument(code);
+    if (act === 'full') wrap.classList.toggle('fullscreen');
+    if (act === 'source') {
+        const pre = wrap.querySelector('pre.rv-source');
+        if (pre) pre.remove();
+        else {
+            const p = document.createElement('pre');
+            p.className = 'rv-source';
+            p.textContent = code;
+            wrap.append(p);
+        }
+    }
+});
+
+/** Fully processed message HTML as a string (SillyTavern's messageFormatting contract). */
+export function renderToHtml(text, opts = {}) {
+    const div = document.createElement('div');
+    const result = formatMessage(text, opts);
+    div.innerHTML = result.html;
+    hydrate(div, result, { message: opts.message });
+    delete div.dataset.rvscope;
+    return div.innerHTML;
+}
 
 // Forget frames that were removed from the DOM.
 setInterval(() => {

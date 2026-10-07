@@ -30,3 +30,12 @@ test('SillyTavern JSONL chats parse with and without a header line', () => {
     assert.deepEqual(b.meta, {});
     assert.equal(b.messages[0].mes, 'yo');
 });
+
+test('Claude conversion: OpenAI-style image parts become Anthropic image blocks', () => {
+    const { messages } = toAnthropic([
+        { role: 'system', content: 'Describe.' },
+        { role: 'user', content: [{ type: 'text', text: 'Who is this?' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }] },
+    ]);
+    assert.equal(messages.length, 1);
+    assert.deepEqual(messages[0].content[1], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } });
+});

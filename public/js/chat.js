@@ -7,6 +7,9 @@ import { substituteParams } from './macros.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { formatMessage, hydrate } from './render.js';
 import { el, icon, toast, confirmDialog, modal, escapeHtml, isMobile } from './ui.js';
+import { points, plainMessage, onPointsChanged } from './rv-ext/points.js';
+import { paintMessage } from './dialogue-colors.js';
+import { messageId } from './message-ids.js';
 
 const chatEl = () => document.getElementById('chat');
 const textarea = () => document.getElementById('send_textarea');
@@ -37,34 +40,61 @@ function messageTemplate(mes, id) {
         class: `mes${mes.is_user ? ' user_mes' : ' char_mes'}${mes.is_system ? ' hidden_mes' : ''}`,
         mesid: id, ch_name: mes.name, is_user: String(!!mes.is_user), is_system: String(!!mes.is_system),
     });
+    // Same structure and class names as SillyTavern's #message_template, so ST themes and
+    // extensions (e.g. ones adding buttons to .extraMesButtons) find what they expect.
     node.innerHTML = `
-        <div class="mesAvatarWrapper"><div class="avatar"><img alt="" loading="lazy"></div></div>
+        <div class="mesAvatarWrapper">
+            <div class="avatar"><img alt="" loading="lazy"></div>
+            <div class="mesIDDisplay"></div><div class="mes_timer"></div><div class="tokenCounterDisplay"></div>
+        </div>
+        <div class="swipe_left fa-solid fa-chevron-left" title="Previous swipe" role="button" tabindex="0"></div>
         <div class="mes_block">
-            <div class="ch_name">
-                <span class="name_text"></span>
-                <small class="timestamp"></small>
-                <span class="mes_hidden_badge" title="Hidden from the AI"><i class="fa-solid fa-eye-slash"></i></span>
+            <div class="ch_name flex-container justifySpaceBetween">
+                <div class="flex-container flex1 alignitemscenter">
+                    <div class="flex-container alignItemsBaseline">
+                        <span class="name_text"></span>
+                        <i class="mes_ghost fa-solid fa-ghost" title="Hidden from the AI"></i>
+                        <small class="timestamp"></small>
+                    </div>
+                </div>
                 <div class="mes_buttons">
-                    <button class="mes_button" data-act="copy" title="Copy"><i class="fa-regular fa-copy"></i></button>
-                    <button class="mes_button" data-act="image" title="Illustrate this message"><i class="fa-solid fa-palette"></i></button>
-                    <button class="mes_button" data-act="edit" title="Edit"><i class="fa-solid fa-pen"></i></button>
-                    <button class="mes_button" data-act="more" title="More"><i class="fa-solid fa-ellipsis"></i></button>
+                    <div class="mes_button extraMesButtonsHint fa-solid fa-ellipsis" data-act="more" title="More"></div>
+                    <div class="extraMesButtons">
+                        <div class="mes_button sd_message_gen fa-solid fa-paintbrush" data-act="image" title="Illustrate this message"></div>
+                        <div class="mes_button mes_copy fa-solid fa-copy" data-act="copy" title="Copy"></div>
+                    </div>
+                    <div class="mes_button mes_edit fa-solid fa-pencil" data-act="edit" title="Edit"></div>
                 </div>
             </div>
-            <details class="mes_reasoning_details hidden"><summary><i class="fa-solid fa-brain"></i> <span class="reasoning-label">Thoughts</span></summary><div class="mes_reasoning"></div></details>
+            <details class="mes_reasoning_details hidden">
+                <summary class="mes_reasoning_summary flex-container"><i class="fa-solid fa-brain"></i> <span class="mes_reasoning_header_title reasoning-label">Thoughts</span></summary>
+                <div class="mes_reasoning"></div>
+            </details>
             <div class="mes_text"></div>
-            <div class="mes_media"></div>
-            <div class="mes_footer">
-                <button class="swipe_left" title="Previous"><i class="fa-solid fa-chevron-left"></i></button>
-                <span class="swipes-counter"></span>
-                <button class="swipe_right" title="Next / new reply"><i class="fa-solid fa-chevron-right"></i></button>
-            </div>
+            <div class="mes_media_wrapper mes_media"></div>
+            <div class="mes_file_wrapper"></div>
+            <div class="mes_bias"></div>
+        </div>
+        <div class="flex-container swipeRightBlock flexFlowColumn flexNoGap">
+            <div class="swipe_right fa-solid fa-chevron-right" title="Next swipe / new reply" role="button" tabindex="0"></div>
+            <div class="swipes-counter"></div>
         </div>`;
     return node;
 }
 
+/** Called after a message is (re)rendered: hook(node, mes, index, { streaming }). */
+export const renderHooks = new Set();
+
 export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
     node.setAttribute('mesid', id);
+    node.setAttribute('data-message-id', messageId(mes));
+    node.setAttribute('data-message-index', id);
+    // Lumiverse's message anatomy, for extensions that look for it.
+    node.dataset.part = streaming ? 'streaming' : mes.is_user ? 'user' : 'character';
+    node.dataset.swipeId = mes.swipe_id ?? 0;
+    node.querySelector('.mes_block')?.classList.add('rv-bubble');
+    const prose = node.querySelector('.mes_text');
+    if (prose && !prose.dataset.component) { prose.dataset.component = 'MessageContent'; prose.classList.add('rv-prose'); }
     node.setAttribute('ch_name', mes.name ?? '');
     node.setAttribute('is_system', String(!!mes.is_system));
     node.classList.toggle('hidden_mes', !!mes.is_system);
@@ -74,7 +104,7 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
 
     const depth = state.chat.length - 1 - id;
     const textEl = node.querySelector('.mes_text');
-    const result = formatMessage(mes.mes, { isUser: mes.is_user, depth, streaming });
+    const result = formatMessage(mes.mes, { isUser: mes.is_user, depth, streaming, message: mes, id });
     textEl.innerHTML = result.html;
     hydrate(textEl, result, { streaming, message: mes, onPic: (prompt, force) => import('./imagegen.js').then(m => m.generateInlinePic(id, prompt, force)) });
     if (streaming && !mes.mes) textEl.innerHTML = '<span class="rv-dots"><span></span><span></span><span></span></span>';
@@ -101,11 +131,25 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
             m.title ? el('figcaption', {}, m.title) : null));
     }
 
+    // Message actions contributed by Reverie extensions.
+    const extra = node.querySelector('.extraMesButtons');
+    extra.querySelectorAll('.rvext-action').forEach(n => n.remove());
+    for (const action of points.messageActions.list()) {
+        try {
+            if (action.when && !action.when(plainMessage(mes, id), id)) continue;
+        } catch { continue; }
+        extra.append(el('div', { class: `mes_button rvext-action fa-solid fa-${action.icon || 'puzzle-piece'}`, title: action.title || '', 'data-rvext-action': action.id }));
+    }
+
+    paintMessage(node, mes);
+    for (const hook of renderHooks) {
+        try { hook(node, mes, id, { streaming }); } catch (err) { console.error('Render hook failed', err); }
+    }
+
     const swipes = mes.swipes?.length || 1;
     const isLast = id === state.chat.length - 1;
-    const footer = node.querySelector('.mes_footer');
     const canSwipe = isLast && !mes.is_user && (swipes > 1 || id > 0 || state.chat.length > 0);
-    footer.classList.toggle('visible', canSwipe || swipes > 1);
+    node.classList.toggle('swipes-visible', canSwipe || swipes > 1);
     node.querySelector('.swipes-counter').textContent = swipes > 1 ? `${(mes.swipe_id ?? 0) + 1} / ${swipes}` : '';
     node.querySelector('.swipe_right').classList.toggle('hidden', !canSwipe);
     node.querySelector('.swipe_left').classList.toggle('hidden', !(canSwipe && (mes.swipe_id ?? 0) > 0) && !(swipes > 1 && isLast));
@@ -326,6 +370,7 @@ export async function showPromptPreview() {
 
 export function bindChatEvents() {
     const root = chatEl();
+    onPointsChanged(kind => { if (kind === 'messageActions' || kind === 'renderers') printMessages(); });
     root.addEventListener('scroll', () => {
         stickToBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 80;
     }, { passive: true });
@@ -334,6 +379,12 @@ export function bindChatEvents() {
         const mesNode = e.target.closest('.mes');
         if (!mesNode) return;
         const id = Number(mesNode.getAttribute('mesid'));
+        const extAction = e.target.closest('[data-rvext-action]');
+        if (extAction) {
+            const action = points.messageActions.list().find(a => a.id === extAction.dataset.rvextAction);
+            try { await action?.onClick?.(plainMessage(state.chat[id], id), id); } catch (err) { toast(err.message, 'error'); }
+            return;
+        }
         const btn = e.target.closest('[data-act], .swipe_left, .swipe_right');
         if (e.target.closest('.rv-zoomable')) return zoomImage(e.target.closest('.rv-zoomable').src);
         if (!btn) {
@@ -494,8 +545,8 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             else prefixText = target.mes;
         }
 
-        const { messages, prefill } = await buildPrompt({ type, quietPrompt, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
-        const body = { ...connectionBody(), messages, params: samplerParams() };
+        const { messages, prefill, extraParams } = await buildPrompt({ type, quietPrompt, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
+        const body = { ...connectionBody(), messages, params: { ...samplerParams(), ...extraParams } };
 
         if (type === 'quiet' && !quietToLoud) {
             const res = await completion(body, { signal: controller.signal });

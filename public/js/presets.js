@@ -99,6 +99,7 @@ export function makeBlock(partial = {}) {
         ...(partial.categoryMode ? { categoryMode: partial.categoryMode } : {}),
         ...(partial.placementBinding ? { placementBinding: partial.placementBinding } : {}),
         ...(partial.characterTagTrigger ? { characterTagTrigger: partial.characterTagTrigger } : {}),
+        ...(partial.when ? { when: String(partial.when) } : {}),
     };
 }
 
@@ -144,12 +145,28 @@ export function normalizePreset(p) {
         customBody: p.customBody || { enabled: false, rawJson: '{}' },
         promptVariables: p.promptVariables || {},
         regex: Array.isArray(p.regex) ? p.regex : [],
+        modelProfiles: Array.isArray(p.modelProfiles) ? p.modelProfiles.map(normalizeProfile) : [],
+        meta: { author: '', version: '', description: '', homepage: '', ...(p.meta || {}) },
+    };
+}
+
+export function normalizeProfile(x = {}) {
+    return {
+        id: x.id || blockId(),
+        name: x.name || x.match || 'Profile',
+        match: x.match || '',
+        enabled: x.enabled !== false,
+        samplers: x.samplers && typeof x.samplers === 'object' ? x.samplers : {},
+        ...(x.assistantPrefill !== undefined && x.assistantPrefill !== null ? { assistantPrefill: String(x.assistantPrefill) } : {}),
     };
 }
 
 // ---------------- detection ----------------
+export const REVERIE_PRESET_FORMAT = 'reverie-preset';
+
 export function detectPresetKind(json) {
     if (!json || typeof json !== 'object') return null;
+    if (json.format === REVERIE_PRESET_FORMAT) return 'reverie';
     if (Array.isArray(json.blocks)) return 'lumiverse';
     if (Array.isArray(json.prompts) || Array.isArray(json.prompt_order)) return 'sillytavern';
     if ('temperature' in json && ('openai_max_tokens' in json || 'openai_max_context' in json)) return 'sillytavern';
@@ -158,6 +175,7 @@ export function detectPresetKind(json) {
 
 export function importPreset(json, fallbackName = 'Imported preset') {
     const kind = detectPresetKind(json);
+    if (kind === 'reverie') return fromReverie(json, fallbackName);
     if (kind === 'lumiverse') return fromLumiverse(json, fallbackName);
     if (kind === 'sillytavern') return fromSillyTavern(json, fallbackName);
     throw new Error('This file does not look like a SillyTavern or Lumiverse chat-completion preset.');
@@ -385,4 +403,18 @@ export function toLumiverse(preset) {
         promptVariables: preset.promptVariables,
         extensions: { ...(raw.extensions || {}), regex_scripts: preset.regex || [] },
     };
+}
+
+// ---------------- Reverie (.rvpreset.json) ----------------
+// A superset of the block format: conditional blocks (`when`), model profiles, metadata,
+// prompt variables and bundled regex — everything travels in one file.
+export function fromReverie(json, fallbackName) {
+    const { format, formatVersion, exportedAt, id, created, updated, raw, ...rest } = json;
+    if (formatVersion > 1) console.warn('[Reverie] This preset was made with a newer Reverie; some features may be ignored.');
+    return normalizePreset({ ...rest, name: rest.name || fallbackName, source: 'reverie' });
+}
+
+export function toReverie(preset) {
+    const { id, created, updated, raw, source, ...rest } = structuredClone(preset);
+    return { format: REVERIE_PRESET_FORMAT, formatVersion: 1, exportedAt: new Date().toISOString(), ...rest };
 }

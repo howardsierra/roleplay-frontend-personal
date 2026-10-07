@@ -8,12 +8,18 @@ import {
     addOneMessage, updateMessageBlock, printMessages, clearChat, generate, generateQuietPrompt, generateRaw,
     stopGeneration, sendMessage, sendSystemMessage, deleteMessage, scrollToBottom, swipeLeft, swipeRight, swipeTo,
 } from '../chat.js';
-import { formatMessage } from '../render.js';
+import { formatMessage, renderToHtml } from '../render.js';
 import { loadWorld, saveWorld } from '../worldinfo.js';
 import { api } from '../api.js';
 import { toastr, modal, el, escapeHtml, debounce, isMobile, toast } from '../ui.js';
 import DOMPurify from '../../vendor/purify.js';
-import { marked } from '../../vendor/marked.js';
+import {
+    ConnectionManagerRequestService, ChatCompletionService, TextCompletionService, personaMaps, getUserAvatar, getUserAvatars,
+    setUserAvatar, setPersonaDescription, getThumbnailUrl, getPastCharacterChats, sendMessageAsUser, extractTextFromHTML, escapeRegex,
+    regexFromString, isDataURL, trimToStartSentence, bufferToBase64, saveBase64AsFile, isFirefox, currentUserAvatar,
+} from './apis.js';
+import { dragElement } from './dom.js';
+export { installStDom } from './dom.js';
 
 // ---------------------------------------------------------------------------
 // Popups (Popup / callGenericPopup / callPopup)
@@ -131,6 +137,10 @@ export const SlashCommandParser = {
             this.commands[alias] = cmd;
         }
     },
+    removeCommand(name) {
+        commands.delete(String(name).toLowerCase());
+        delete this.commands[name];
+    },
     addCommand(name, callback, aliases = [], helpString = '') {
         this.addCommandObject(SlashCommand.fromProps({ name, callback, aliases, helpString }));
     },
@@ -173,27 +183,39 @@ function parseArgs(rest) {
     return { named, unnamed: s };
 }
 
+const RETURN = Symbol('return');
+const isClosure = v => typeof v === 'string' && /^\{:[\s\S]*:\}$/.test(v.trim());
+const closureBody = v => v.trim().slice(2, -2);
+
+/** Run a closure argument ({: ... :}) and return its pipe value. */
+export async function runClosure(value, pipe = '') {
+    if (!isClosure(value)) return value;
+    return (await executeSlashCommands(closureBody(value), { pipe })).pipe;
+}
+
 export async function executeSlashCommands(text, { pipe = '' } = {}) {
     let value = pipe;
     const script = String(text ?? '').trim();
     if (!script.startsWith('/')) return { pipe: script, isError: false };
     for (const raw of splitTopLevel(script, '|')) {
         const piece = raw.trim();
-        if (!piece) continue;
+        if (!piece || piece.startsWith('//') || piece.startsWith('#')) continue; // comments
         const m = piece.match(/^\/(\S+)\s*([\s\S]*)$/);
         if (!m) { value = substituteParams(piece, { pipe: value }); continue; }
         const cmd = commands.get(m[1].toLowerCase());
         if (!cmd) {
             toast(`Unknown command /${m[1]}`, 'warning');
+            console.warn(`[Reverie] Unknown slash command /${m[1]}`);
             return { pipe: value, isError: true, errorMessage: `Unknown command /${m[1]}` };
         }
         const withPipe = m[2].replace(/\{\{pipe\}\}/gi, String(value ?? ''));
         const { named, unnamed } = parseArgs(withPipe);
-        for (const k of Object.keys(named)) named[k] = substituteParams(named[k]);
-        let arg = substituteParams(unnamed);
+        for (const k of Object.keys(named)) if (!isClosure(named[k])) named[k] = substituteParams(named[k]);
+        let arg = isClosure(unnamed) ? unnamed.trim() : substituteParams(unnamed);
         if (!arg && value !== undefined && value !== '') arg = String(value);
         try {
             const out = await cmd.callback(named, arg);
+            if (out && typeof out === 'object' && out[RETURN]) return { pipe: String(out.value ?? ''), isError: false };
             value = out === undefined || out === null ? '' : out;
         } catch (err) {
             console.error(err);
@@ -206,12 +228,130 @@ export async function executeSlashCommands(text, { pipe = '' } = {}) {
 
 export const executeSlashCommandsWithOptions = (text, options = {}) => executeSlashCommands(text, options);
 
+const SAMPLER_NAMES = {
+    temperature: 'temperature', temp: 'temperature', top_p: 'top_p', top_k: 'top_k', min_p: 'min_p', top_a: 'top_a',
+    frequency_penalty: 'frequency_penalty', freq_pen: 'frequency_penalty', presence_penalty: 'presence_penalty', pres_pen: 'presence_penalty',
+    repetition_penalty: 'repetition_penalty', rep_pen: 'repetition_penalty', max_tokens: 'max_tokens', amount_gen: 'max_tokens',
+    response_length: 'max_tokens', context_size: 'context_size', max_context: 'context_size', seed: 'seed',
+};
+
+/**
+ * Commands Reverie implements natively that would otherwise be taken over by extensions which scrape
+ * SillyTavern's own settings panels (e.g. Sampler Commands). Registered after extensions load.
+ */
+export function registerNativeOverrides() {
+    const resolveName = raw => SAMPLER_NAMES[String(raw || '').trim().toLowerCase().replace(/[\s-]+/g, '_')];
+    SlashCommandParser.addCommand('sampler-get', async args => {
+        const key = resolveName(args.name);
+        if (!key) throw new Error(`Unknown sampler "${args.name}". Try: ${[...new Set(Object.values(SAMPLER_NAMES))].join(', ')}`);
+        return String(state.preset.samplers[key] ?? '');
+    }, [], 'Get a sampler value: /sampler-get name=temperature');
+    SlashCommandParser.addCommand('sampler-set', async (args, value) => {
+        const key = resolveName(args.name);
+        if (!key) throw new Error(`Unknown sampler "${args.name}"`);
+        const n = Number(value);
+        if (!Number.isFinite(n)) throw new Error('Value must be a number');
+        state.preset.samplers[key] = n;
+        (await import('../preset-store.js')).savePresetDebounced();
+        await eventSource.emit(event_types.SETTINGS_UPDATED);
+        return '';
+    }, [], 'Set a sampler value: /sampler-set name=temperature 0.9');
+}
+
 function registerBuiltins() {
     const add = (name, callback, aliases = [], helpString = '') => SlashCommandParser.addCommand(name, callback, aliases, helpString);
     add('send', async (_a, text) => { await sendMessage(text, { generateAfter: false }); return ''; }, [], 'Send a message as you without generating.');
-    add('trigger', async () => { generate('normal'); return ''; }, [], 'Ask the character to reply.');
+    add('trigger', async args => {
+        const run = generate('normal');
+        if (isTrueBoolean(args.await ?? 'false')) await run;
+        return '';
+    }, [], 'Ask the character to reply.');
+    // ---- prompt injections (/inject id= position=chat|before|after|none depth= role= scan= ephemeral=) ----
+    const positions = { chat: 1, before: 2, after: 0, none: -1 };
+    const roles = { system: 0, user: 1, assistant: 2 };
+    const ephemeral = new Set();
+    add('inject', async (args, text) => {
+        const id = args.id || `inject_${Date.now()}`;
+        setExtensionPrompt(`inject_${id}`, text, positions[args.position ?? 'after'] ?? 0, Number(args.depth ?? 4), isTrueBoolean(args.scan ?? 'false'), roles[args.role ?? 'system'] ?? 0);
+        if (isTrueBoolean(args.ephemeral ?? 'false')) ephemeral.add(`inject_${id}`);
+        else ephemeral.delete(`inject_${id}`);
+        return '';
+    });
+    add('flushinject', async (_a, id) => {
+        for (const key of Object.keys(extensionPrompts)) {
+            if (key.startsWith('inject_') && (!id || key === `inject_${id}`)) delete extensionPrompts[key];
+        }
+        return '';
+    }, ['flushinjects']);
+    add('listinjects', async () => JSON.stringify(Object.fromEntries(Object.entries(extensionPrompts).filter(([k]) => k.startsWith('inject_')).map(([k, v]) => [k.slice(7), v]))));
+    eventSource.on(event_types.GENERATION_ENDED, () => {
+        for (const key of ephemeral) delete extensionPrompts[key];
+        ephemeral.clear();
+    });
+    // ---- control flow ----
+    const compare = (a, b, rule) => {
+        const na = Number(a);
+        const nb = Number(b);
+        const num = !Number.isNaN(na) && !Number.isNaN(nb) && a !== '' && b !== '';
+        switch (rule) {
+            case 'eq': return num ? na === nb : a === b;
+            case 'neq': return num ? na !== nb : a !== b;
+            case 'lt': return num && na < nb;
+            case 'gt': return num && na > nb;
+            case 'lte': return num && na <= nb;
+            case 'gte': return num && na >= nb;
+            case 'in': return String(a).includes(String(b));
+            case 'nin': return !String(a).includes(String(b));
+            case 'not': return !a || a === 'false' || a === '0';
+            default: return !!a && a !== 'false' && a !== '0';
+        }
+    };
+    const resolve = v => {
+        if (v === undefined) return '';
+        if (variables.local.has(v)) return variables.local.get(v);
+        if (variables.global.has(v)) return variables.global.get(v);
+        return v;
+    };
+    add('if', async (args, body) => {
+        const ok = compare(resolve(args.left), resolve(args.right), args.rule || (args.right === undefined ? 'truthy' : 'eq'));
+        if (ok) return runClosure(body);
+        if (args.else) return runClosure(args.else);
+        return '';
+    });
+    add('return', async (_a, value) => ({ [RETURN]: true, value }));
+    add('run', async (_a, body) => runClosure(body));
+    add('times', async (_a, text) => {
+        const [count, ...rest] = String(text).split(/\s+/);
+        let out = '';
+        for (let i = 0; i < Math.min(Number(count) || 0, 100); i++) out = await runClosure(rest.join(' ').replace(/\{\{timesIndex\}\}/g, i));
+        return out;
+    });
+    // ---- messages ----
+    const range = (text, fallback) => {
+        const [a, b] = String(text || fallback).split('-').map(Number);
+        return [a, Number.isNaN(b) ? a : b];
+    };
+    const setHidden = async (text, hidden) => {
+        const [from, to] = range(text, state.chat.length - 1);
+        for (let i = Math.max(0, from); i <= Math.min(to, state.chat.length - 1); i++) state.chat[i].is_system = hidden;
+        printMessages();
+        await saveChat();
+        return '';
+    };
+    add('hide', (_a, text) => setHidden(text, true));
+    add('unhide', (_a, text) => setHidden(text, false));
+    add('messages', async (args, text) => {
+        const [from, to] = range(text, `0-${state.chat.length - 1}`);
+        const names = args.names !== 'off';
+        return state.chat.slice(from, to + 1).filter(m => args.hidden === 'on' || !m.is_system).map(m => (names ? `${m.name}: ${m.mes}` : m.mes)).join('\n\n');
+    }, ['message']);
+    add('lastmessageid', async () => String(state.chat.length - 1));
     add('continue', async () => { generate('continue'); return ''; }, ['cont']);
-    add('impersonate', async () => { await generate('impersonate'); return ''; }, ['imp']);
+    add('impersonate', async (args, text) => {
+        const run = generate('impersonate', { quietPrompt: text && !isClosure(text) ? text : '' });
+        if (isTrueBoolean(args.await ?? 'true')) await run;
+        return '';
+    }, ['imp']);
     add('swipe', async () => { await swipeRight(); return ''; });
     add('gen', async (args, text) => (await generateQuietPrompt(text)) ?? '', ['generate']);
     add('genraw', async (args, text) => (await generateRaw(text, null, false, false, args.system || '')) ?? '');
@@ -325,16 +465,20 @@ export const onlyUnique = (v, i, a) => a.indexOf(v) === i;
 export const copyText = text => navigator.clipboard?.writeText(text);
 export const t = (strings, ...values) => (Array.isArray(strings) ? strings.reduce((acc, s, i) => acc + s + (values[i] ?? ''), '') : String(strings));
 
-const showdown = {
-    Converter: class {
-        constructor() { this.options = {}; }
-        makeHtml(text) { return marked.parse(String(text ?? '')); }
-        setOption(k, v) { this.options[k] = v; }
-        getOption(k) { return this.options[k]; }
-    },
-    setFlavor() {},
-    extension() {},
-};
+// ST's lib.js libraries are loaded as globals in index.html.
+const libs = () => ({
+    DOMPurify, showdown: window.showdown, lodash: window._, Handlebars: window.Handlebars, moment: window.moment,
+    localforage: window.localforage, Popper: window.Popper, Fuse: window.Fuse,
+});
+
+function characterFields() {
+    const d = state.character?.card?.data || {};
+    return {
+        system: d.system_prompt || '', mesExamples: d.mes_example || '', description: d.description || '', personality: d.personality || '',
+        persona: currentPersona().description || '', scenario: d.scenario || '', jailbreak: d.post_history_instructions || '',
+        version: d.character_version || '', charDepthPrompt: d.extensions?.depth_prompt?.prompt || '', creatorNotes: d.creator_notes || '',
+    };
+}
 
 function stCharacter(summary) {
     const full = state.character?.id === summary.id ? state.character.card.data : null;
@@ -447,9 +591,15 @@ export function getContext() {
             await api.put(`characters/${encodeURIComponent(summary.id)}`, { card: c.card });
             if (state.character?.id === summary.id) state.character.card = c.card;
         },
-        getThumbnailUrl: (_type, file) => `files/avatars/${encodeURIComponent(file)}`,
+        getThumbnailUrl,
+        ConnectionManagerRequestService,
+        ChatCompletionService,
+        TextCompletionService,
+        getCharacterCardFields: () => characterFields(),
+        unshallowCharacter: async () => {},
+        getExtensionManifest: async name => (await import('./extensions-loader.js')).loaded.get(String(name).replace(/^third-party\//, ''))?.manifest,
         selectCharacterById: async id => (await import('../characters.js')).openCharacter(state.characters[id]?.id),
-        messageFormatting: (mes, _name, _isSystem, isUser) => formatMessage(mes, { isUser }).html,
+        messageFormatting: (mes, _name, _isSystem, isUser, messageId) => renderToHtml(mes, { isUser, message: state.chat[messageId], depth: Number.isFinite(messageId) ? state.chat.length - 1 - messageId : undefined }),
         updateMessageBlock: (id, mes) => updateMessageBlock(id, mes),
         shouldSendOnEnter: () => !isMobile(),
         isMobile,
@@ -511,15 +661,21 @@ function presetAsOai() {
     };
 }
 
+/** Persistent power_user object (extensions mutate it and then call saveSettingsDebounced). */
 function powerUser() {
-    return {
-        user_avatar: currentPersona().avatar,
+    const pu = (state.settings.power_user ??= {});
+    Object.assign(pu, personaMaps(), {
+        user_avatar: currentUserAvatar(),
         persona_description: currentPersona().description,
         custom_css: state.settings.appearance.customCss,
         chat_display: state.settings.appearance.chatStyle,
         prefer_character_prompt: state.settings.generation.preferCharPrompt,
         prefer_character_jailbreak: state.settings.generation.preferCharInstructions,
-    };
+        movingUIState: pu.movingUIState || {},
+        avatar_style: 0,
+        expand_message_actions: false,
+    });
+    return pu;
 }
 
 // ---------------------------------------------------------------------------
@@ -557,7 +713,7 @@ const live = () => {
         Generate: ctx.generate, stopGeneration, getCharacters: ctx.getCharacters, selectCharacterById: ctx.selectCharacterById,
         main_api: 'openai', online_status: ctx.onlineStatus, is_send_press: state.generating, menu_type: ctx.menuType,
         max_context: ctx.maxContext, amount_gen: state.preset?.samplers?.max_tokens, default_avatar: 'icons/icon.svg',
-        getThumbnailUrl: ctx.getThumbnailUrl, animation_duration: 125, animation_easing: 'ease-in-out', user_avatar: currentPersona().avatar,
+        getThumbnailUrl, animation_duration: 125, animation_easing: 'ease-in-out', user_avatar: currentUserAvatar(), default_user_avatar: 'icons/user.svg',
         activateSendButtons: ctx.activateSendButtons, deactivateSendButtons: ctx.deactivateSendButtons, saveMetadata: ctx.saveMetadata,
         updateChatMetadata: ctx.updateChatMetadata, printMessages, clearChat, scrollChatToBottom: ctx.scrollChatToBottom,
         isStreamingEnabled: () => state.preset?.samplers?.stream !== false, getTokenCount: ctx.getTokenCount,
@@ -584,9 +740,43 @@ const live = () => {
         power_user: ctx.powerUserSettings, oai_settings: ctx.chatCompletionSettings, world_info: {}, world_names: [],
         loadWorldInfo: ctx.loadWorldInfo, saveWorldInfo: ctx.saveWorldInfo, isMobile,
         // lib.js
-        DOMPurify, showdown, tags: [], tag_map: {}, groups: [], selected_group: null, is_group_generating: false,
+        ...libs(), tags: [], tag_map: {}, groups: [], selected_group: null, is_group_generating: false,
+        // personas.js
+        getUserAvatar, getUserAvatars, setUserAvatar, setPersonaDescription, isPersonaLocked: () => false, togglePersonaLock: async () => {},
+        convertCharacterToPersona: async () => {}, setUserName: async () => {},
+        // misc script.js / utils.js / others
+        getPastCharacterChats, sendMessageAsUser, showSwipeButtons: () => {}, hideSwipeButtons: () => {}, setSendButtonState: () => {},
+        setExternalAbortController: () => {}, reloadMarkdownProcessor: () => {}, extractMessageBias: () => '',
+        extractTextFromHTML, escapeRegex, regexFromString, isDataURL, trimToStartSentence, bufferToBase64, saveBase64AsFile,
+        isFirefox, dragElement, loadMovingUIState: () => {}, registerDebugFunction: () => {},
+        getGroupPastChats: async () => [], findGroupMemberId: () => null,
+        textgen_types: {}, textgenerationwebui_settings: {}, SECRET_KEYS: {}, secret_state: {}, writeSecret: async () => {},
+        getWorldInfoPrompt: async () => ({ worldInfoString: '', worldInfoBefore: '', worldInfoAfter: '' }),
+        openWorldInfoEditor: () => import('../panels/settings.js').then(m => m.openSettings('lore')),
+        resolveVariable: name => variables.local.get(name) || variables.global.get(name) || name,
+        evalBoolean: () => false, parseBooleanOperands: () => [],
+        enumIcons: {}, commonEnumProviders: new Proxy({}, { get: () => () => [] }), enumTypes: { enum: 0, command: 1, namedArgument: 2, macro: 3 },
+        SlashCommandAbortController: class { constructor() { this.signal = { aborted: false }; } abort() { this.signal.aborted = true; } },
+        SlashCommandClosure: class {}, SlashCommandClosureResult: class {}, SlashCommandScope: class {}, SlashCommandBreakController: class {},
+        SlashCommandNamedArgumentAssignment: class {},
+        ConnectionManagerRequestService, ChatCompletionService, TextCompletionService,
         MacrosParser: { registerMacro, unregisterMacro }, macros: { register: (n, o) => registerMacro(n, o?.handler ?? o) },
         accountStorage: ctx.accountStorage, loader: ctx.loader, getPresetManager: () => null, ToolManager: { registerFunctionTool() {}, unregisterFunctionTool() {}, isToolCallingSupported: () => false },
+        timestampToMoment: ts => (window.moment ? window.moment(ts) : new Date(ts)),
+        sortMoments: (a, b) => (b?.valueOf?.() ?? 0) - (a?.valueOf?.() ?? 0),
+        parseJsonFile: file => file.text().then(JSON.parse), getFileText: file => file.text(),
+        getCharaFilename: id => state.characters[id ?? characterIndex()]?.avatar?.replace(/\.[^.]+$/, '') ?? '',
+        loadFileToDocument: async (url, type) => {
+            const node = type === 'css' ? Object.assign(document.createElement('link'), { rel: 'stylesheet', href: url }) : Object.assign(document.createElement('script'), { src: url });
+            document.head.append(node);
+            await new Promise(r => { node.onload = r; node.onerror = r; });
+        },
+        getMessageTimeStamp: () => new Date().toLocaleString(), humanizedDateTime: () => new Date().toISOString().replace(/[:.]/g, '-'),
+        getGroupChat: async () => null, appendFileContent: async () => {}, uploadFileAttachment: async () => null,
+        loadExtensionSettings: async () => {}, getExtensionManifest: ctx.getExtensionManifest,
+        quickReplyApi: undefined, QuickReplySet: undefined,
+        hljs: undefined, seedrandom: undefined, droll: undefined, morphdom: undefined, slideToggle: undefined, chalk: undefined, yaml: undefined,
+        SVGInject: undefined, Readability: undefined, isProbablyReaderable: undefined, diff_match_patch: undefined, css: undefined, Bowser: undefined, DiffMatchPatch: undefined,
     };
 };
 
@@ -617,7 +807,9 @@ globalThis.__RV_SHIM__ = {
 // ---------------------------------------------------------------------------
 export function installCompat() {
     registerBuiltins();
-    window.SillyTavern = { getContext, libs: { DOMPurify, showdown } };
+    window.SillyTavern = { getContext, libs: libs() };
+    if (window.Fuse === undefined) import('../../vendor/fuse.js').then(m => { window.Fuse = m.default; window.SillyTavern.libs.Fuse = m.default; }).catch(() => {});
+    window.dragElement = dragElement;
     window.toastr = toastr;
     window.Popup = Popup;
     window.callPopup = callPopup;

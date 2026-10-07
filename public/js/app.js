@@ -7,9 +7,13 @@ import { loadCharacters, renderLibrary, openCharacter, importCharacter, createCh
 import { bindChatEvents, sendMessage, generate, stopGeneration, autoGrow, showPromptPreview, swipeRight } from './chat.js';
 import { initSettings, openSettings } from './panels/settings.js';
 import { openImageStudio, openGallery } from './imagegen.js';
-import { installCompat, frameRpc, executeSlashCommands } from './st/compat.js';
+import { installCompat, installStDom, frameRpc, executeSlashCommands, registerNativeOverrides } from './st/compat.js';
 import { loadExtensions } from './st/extensions-loader.js';
+import { loadReverieExtensions } from './rv-ext/loader.js';
+import { loadLumiverseExtensions } from './spindle/host.js';
+import { initDialogueColors, openCastEditor } from './dialogue-colors.js';
 import { setFrameRpcHandler } from './render.js';
+import { initLayout } from './layout.js';
 import { el, icon, toast, modal, toggleDrawer, closeAllDrawers, openDrawer, isMobile } from './ui.js';
 
 const $id = id => document.getElementById(id);
@@ -26,6 +30,7 @@ function coreActions() {
         ['square-plus', 'New chat', newChat],
         ['scroll', 'Prompt preview', showPromptPreview],
         ['note-sticky', "Author's note", () => openSettings('advanced')],
+        ['palette', 'Cast colors', openCastEditor],
     ];
     menu.replaceChildren(...items.map(([ic, label, fn]) => el('button', { class: 'menu-item list-group-item', onclick: () => { hideMenu(); fn(); } }, icon(ic), el('span', {}, label))));
 }
@@ -42,9 +47,15 @@ function bindUi() {
     $id('scrim').addEventListener('click', closeAllDrawers);
     document.querySelectorAll('.drawer-close').forEach(b => b.addEventListener('click', closeAllDrawers));
     document.addEventListener('click', e => {
-        const action = e.target.closest('[data-action]')?.dataset.action;
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+        const action = target.dataset.action;
+        if (target.closest('summary')) e.preventDefault();
         if (action === 'import-character') importCharacter();
         if (action === 'create-character') createCharacter();
+        if (action === 'new-story') newStory();
+        if (action === 'gallery') { closeAllDrawers(); openGallery(); }
+        if (action === 'open-settings') openSettings(target.dataset.tab);
     });
     $id('char-search').addEventListener('input', renderLibrary);
 
@@ -104,6 +115,33 @@ function bindUi() {
     }
 }
 
+async function newStory() {
+    closeAllDrawers();
+    if (!state.characters.length) return importCharacter();
+    let close = () => {};
+    const grid = el('div', { class: 'char-grid picker' }, state.characters.map(c => {
+        const tile = el('button', { class: 'char-tile', title: c.name },
+            el('div', { class: 'char-tile-img', style: { backgroundImage: `url("${c.avatar ? `files/avatars/${encodeURIComponent(c.avatar)}` : 'icons/icon.svg'}")` } }),
+            el('div', { class: 'char-tile-info' }, el('div', { class: 'char-tile-name' }, c.name)));
+        tile.addEventListener('click', async () => {
+            close();
+            await openCharacter(c.id);
+            await newChat();
+        });
+        return tile;
+    }));
+    modal({
+        title: 'Begin a new story',
+        content: el('div', { class: 'stack' }, el('p', { class: 'hint' }, 'Choose who this story is with.'), grid,
+            el('div', { class: 'row gap wrap' },
+                el('button', { class: 'btn small', onclick: () => { close(); importCharacter(); } }, icon('file-import'), 'Import a card'),
+                el('button', { class: 'btn small', onclick: () => { close(); createCharacter(); } }, icon('plus'), 'Create a character'))),
+        wide: true,
+        buttons: [],
+        onOpen: (_b, c) => { close = c; },
+    });
+}
+
 async function welcome() {
     const name = el('input', { class: 'input', type: 'text', placeholder: 'Your name', value: '' });
     const content = el('div', { class: 'stack welcome' },
@@ -131,6 +169,8 @@ async function boot() {
     setFrameRpcHandler(frameRpc);
     await loadSettings();
     await eventSource.emit(event_types.SETTINGS_LOADED_BEFORE, state.settings);
+    state.providers = await (await import('./api.js')).api.get('providers').catch(() => null);
+    installStDom();
     applyTheme();
     initSettings();
     coreActions();
@@ -138,16 +178,22 @@ async function boot() {
     bindChatEvents();
     await ensurePreset();
     await loadCharacters();
+    initLayout();
+    initDialogueColors();
     await eventSource.emit(event_types.SETTINGS_LOADED, state.settings);
     await eventSource.emit(event_types.SETTINGS_LOADED_AFTER, state.settings);
     await eventSource.emit(event_types.APP_INITIALIZED);
 
+    // Like SillyTavern: extensions load before the first chat opens, so they see CHAT_CHANGED for it.
+    await loadExtensions();
+    registerNativeOverrides();
+    await loadReverieExtensions();
+    await loadLumiverseExtensions().catch(err => console.error('Lumiverse extensions failed to load', err));
+    await eventSource.emit(event_types.APP_READY);
+
     const last = state.settings.lastCharacterId;
     if (last && state.characters.some(c => c.id === last)) await openCharacter(last);
-
     document.body.classList.add('ready');
-    await loadExtensions();
-    await eventSource.emit(event_types.APP_READY);
 
     if (!state.settings.onboarded) await welcome();
     else if (!state.settings.connection.model) {

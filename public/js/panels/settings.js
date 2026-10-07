@@ -30,6 +30,10 @@ export async function showTab(id) {
         host.classList.add('hidden');
         document.getElementById('right-nav-panel').append(host);
     }
+    // SillyTavern blocks that extensions decorate are parked in #st-dom when their tab isn't shown.
+    for (const block of document.querySelectorAll('[data-st-park]')) {
+        if (block.parentElement?.id !== 'st-dom') document.getElementById('st-dom').append(block);
+    }
     current = tab.id;
     document.querySelectorAll('#settings-tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab.id));
     document.getElementById('settings-title').textContent = tab.label;

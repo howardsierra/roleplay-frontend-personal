@@ -129,6 +129,20 @@ export async function newChat({ messages } = {}) {
     if (greeting && !messages) await eventSource.emit(event_types.CHARACTER_FIRST_MESSAGE_SELECTED, 0);
 }
 
+/** Leave the current chat and return to the home screen. */
+export async function closeChat() {
+    await saveChat();
+    state.character = null;
+    state.chatId = null;
+    state.chat = [];
+    state.chatMeta = {};
+    clearChat();
+    document.body.classList.add('no-character');
+    updateHeader();
+    renderLibrary();
+    await eventSource.emit(event_types.CHAT_CHANGED, null);
+}
+
 export async function branchChat(id) {
     const messages = structuredClone(state.chat.slice(0, id + 1));
     await newChat({ messages });

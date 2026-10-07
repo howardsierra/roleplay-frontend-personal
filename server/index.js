@@ -9,7 +9,10 @@ import charactersRouter from './routes/characters.js';
 import chatsRouter from './routes/chats.js';
 import aiRouter from './routes/ai.js';
 import filesRouter from './routes/files.js';
-import { apiRouter as extensionsApi, serveRouter as extensionsServe } from './routes/extensions.js';
+import { apiRouter as extensionsApi, serveRouter as extensionsServe, dataRouter as extDataRouter } from './routes/extensions.js';
+import stCompatRouter, { USER_FILES } from './routes/st-compat.js';
+import { spindleRouter, spindleServe, oauthRouter, lumiverseAliases } from './routes/spindle.js';
+import { startAll as startSpindle } from './spindle/host.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -103,12 +106,14 @@ const PUBLIC_PATHS = new Set(['/login.html', '/css/login.css', '/manifest.webman
 app.use((req, res, next) => {
     // Media uses unguessable random names and must load inside sandboxed iframes (no cookies there).
     if (isAuthed(req) || PUBLIC_PATHS.has(req.path) || req.path.startsWith('/files/')) return next();
-    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Not logged in' });
+    if (req.path.startsWith('/api/')) return res.status(401).set('X-Reverie-Auth', 'login-required').json({ error: 'Not logged in' });
     if (req.method === 'GET' && (req.path === '/' || req.path.endsWith('.html'))) return res.redirect('/login.html');
     return res.status(401).end();
 });
 
 // ---------- API ----------
+// SillyTavern-compatible endpoints first: some share a prefix with Reverie's own routes.
+app.use('/api', stCompatRouter);
 app.use('/api/characters', charactersRouter);
 app.use('/api/chats', chatsRouter);
 app.use('/api/presets', collectionRouter(DIRS.presets, { summary: p => ({ id: p.id, name: p.name, source: p.source, updated: p.updated }) }));
@@ -116,6 +121,10 @@ app.use('/api/worlds', collectionRouter(DIRS.worlds, { summary: w => ({ id: w.id
 app.use('/api/themes', collectionRouter(DIRS.themes));
 app.use('/api/personas', collectionRouter(DIRS.personas));
 app.use('/api/extensions', extensionsApi);
+app.use('/api/spindle', spindleRouter);
+app.use('/api/spindle-oauth', oauthRouter);
+app.use('/api/v1', lumiverseAliases);
+app.use('/api/ext-data', extDataRouter);
 app.use('/api', aiRouter);
 app.use('/api', filesRouter);
 app.get('/api/info', (_req, res) => res.json({ name: 'Reverie', version: process.env.npm_package_version || '0.1.0', auth: !!PASSWORD }));
@@ -125,10 +134,21 @@ const staticOpts = { fallthrough: true, index: false, maxAge: '7d' };
 app.use('/files/avatars', express.static(DIRS.avatars, staticOpts));
 app.use('/files/backgrounds', express.static(DIRS.backgrounds, staticOpts));
 app.use('/files/images', express.static(DIRS.images, staticOpts));
+// SillyTavern-style media paths returned by the ST-compatible upload endpoints.
+app.use('/user/images', express.static(DIRS.images, staticOpts));
+app.use('/user/files', express.static(USER_FILES, staticOpts));
 const vendor = {
     'jquery.js': 'jquery/dist/jquery.min.js',
     'purify.js': 'dompurify/dist/purify.es.mjs',
     'marked.js': 'marked/lib/marked.esm.js',
+    // Libraries SillyTavern bundles (lib.js) and extensions expect to find.
+    'lodash.js': 'lodash/lodash.min.js',
+    'handlebars.js': 'handlebars/dist/handlebars.min.js',
+    'moment.js': 'moment/min/moment.min.js',
+    'localforage.js': 'localforage/dist/localforage.min.js',
+    'showdown.js': 'showdown/dist/showdown.min.js',
+    'popper.js': '@popperjs/core/dist/umd/popper.min.js',
+    'fuse.js': 'fuse.js/dist/fuse.min.mjs',
 };
 for (const [name, rel] of Object.entries(vendor)) {
     const file = path.join(ROOT, 'node_modules', rel);
@@ -136,6 +156,7 @@ for (const [name, rel] of Object.entries(vendor)) {
 }
 app.use('/vendor/fontawesome', express.static(path.join(ROOT, 'node_modules/@fortawesome/fontawesome-free'), { maxAge: '30d' }));
 app.use(extensionsServe);
+app.use(spindleServe);
 app.use(express.static(PUBLIC, { index: 'index.html', setHeaders: res => res.set('Cache-Control', 'no-cache') }));
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
@@ -149,6 +170,7 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(PORT, HOST, () => {
+    startSpindle().catch(err => console.error('Lumiverse extensions failed to start', err));
     console.log(`\n  ✦ Reverie is running → http://localhost:${PORT}`);
     console.log(`    data folder: ${DATA_DIR}`);
     if (!PASSWORD) console.log('    ⚠ No APP_PASSWORD set — anyone who can reach this address can use it. Set one before exposing it online.\n');

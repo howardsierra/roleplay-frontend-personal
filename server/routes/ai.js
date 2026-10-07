@@ -16,7 +16,7 @@ const ENV_KEYS = {
     nanogpt: 'NANOGPT_API_KEY', novelai: 'NOVELAI_API_KEY', custom: 'CUSTOM_API_KEY', custom_image: 'CUSTOM_IMAGE_API_KEY',
 };
 
-async function getSecret(name) {
+export async function getSecret(name) {
     const secrets = await readJson(SECRETS_FILE, {});
     return secrets[name] || (ENV_KEYS[name] && process.env[ENV_KEYS[name]]) || '';
 }
