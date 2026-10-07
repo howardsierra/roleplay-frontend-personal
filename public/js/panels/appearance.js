@@ -138,9 +138,23 @@ export async function render(body) {
                 } }, icon('image'), a.sidebarArt ? 'Change sidebar art' : 'Add sidebar art (a mascot, a sigil…)'),
                 a.sidebarArt ? el('button', { class: 'btn small danger', onclick: () => { a.sidebarArt = ''; saveSettingsDebounced(); applyBranding(); rerender(); } }, icon('xmark'), 'Remove art') : null),
             a.sidebarArt ? field('Art caption', textInput(a.sidebarArtCaption || '', v => { a.sidebarArtCaption = v; saveSettingsDebounced(); applyBranding(); }, { placeholder: "Haven's Pet" })) : null),
-        section('Custom CSS',
-            textArea(a.customCss || '', debounce(v => { a.customCss = v; save(); }, 400), { rows: 8, class: 'input mono', placeholder: '/* SillyTavern selectors like .mes, .mes_text, #chat, #send_form work here */' }),
-            el('p', { class: 'hint' }, 'Applied after the theme\'s own custom_css.')));
+        stThemeAddons(),
+        section('Custom CSS', customCssBlock(),
+            el('p', { class: 'hint' }, 'Applied after the theme\'s own custom_css. SillyTavern snippets and selectors (.mes, .mes_text, #chat, #send_form…) work here.')));
+}
+
+function stThemeAddons() {
+    // Extensions like Custom Theme Style Inputs add controls to ST's #FontBlurChatWidthBlock.
+    const block = document.getElementById('FontBlurChatWidthBlock');
+    return block?.children.length ? section('From extensions', block) : '';
+}
+
+function customCssBlock() {
+    // The real #CustomCSS-block lives in #st-dom so extensions (CSS Snippets, Custom Theme Style Inputs) can find it.
+    const block = document.getElementById('CustomCSS-block');
+    const css = document.getElementById('customCSS');
+    css.value = state.settings.appearance.customCss || '';
+    return block;
 }
 
 async function backgroundSection(a, save) {

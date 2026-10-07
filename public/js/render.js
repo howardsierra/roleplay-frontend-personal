@@ -14,6 +14,7 @@ const RAW_DOC = /<!doctype html[\s\S]*?<\/html>|<html[\s>][\s\S]*?<\/html>/gi;
 const PIC_TAGS = /<pic\s+prompt\s*=\s*(["'])([\s\S]*?)\1\s*\/?>(?:\s*<\/pic>)?|\[(?:img|pic|image)\s*:\s*([^\]]+)\]|<img\s+prompt\s*=\s*(["'])([\s\S]*?)\4[^>]*>/gi;
 
 let scopeCounter = 0;
+const LANG_ALIASES = { js: 'javascript', mjs: 'javascript', jsx: 'javascript', ts: 'typescript', py: 'python', sh: 'bash', shell: 'bash', yml: 'yaml', md: 'markdown', stsc: 'stscript' };
 
 /**
  * @returns {{ html: string, widgets: Array<{kind, code}>, pics: string[], wholeDoc: boolean }}
@@ -65,7 +66,8 @@ export function formatMessage(text, { isUser = false, depth, streaming = false, 
         FORCE_BODY: true,
         ADD_TAGS: ['style', 'rv-widget', 'rv-pic', 'q', 'details', 'summary', 'audio', 'video', 'source', 'font', 'center'],
         ADD_ATTR: ['data-i', 'target', 'controls', 'autoplay', 'loop', 'muted', 'playsinline', 'open', 'color', 'face', 'size', 'align'],
-        FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button', 'link', 'meta', 'base'],
+        // Like SillyTavern, keep buttons / inputs / selects (extensions such as Clickable Inputs use them); event handlers are still stripped.
+        FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'link', 'meta', 'base'],
         FORBID_ATTR: ['srcdoc'],
     });
     return { html, widgets, pics, wholeDoc };
@@ -79,6 +81,13 @@ export function hydrate(container, result, { streaming = false, onPic, message }
         style.textContent = `@scope ([data-rvscope="${scope}"]) {\n${style.textContent}\n}`;
     }
     if (state.settings.render.quotes) highlightQuotes(container);
+    // Canonical language classes, as SillyTavern's highlighter produces (extensions match on them).
+    for (const code of container.querySelectorAll('pre code[class*="language-"]')) {
+        const lang = code.className.match(/language-([\w+#-]+)/)?.[1]?.toLowerCase();
+        const canonical = LANG_ALIASES[lang];
+        if (canonical) code.classList.add(`language-${canonical}`);
+        code.classList.add('hljs');
+    }
     for (const a of container.querySelectorAll('a[href]')) {
         a.target = '_blank';
         a.rel = 'noopener noreferrer';
@@ -237,27 +246,13 @@ export function htmlWidget(code, { whole = false } = {}) {
     iframe.setAttribute('loading', 'lazy');
     iframe.style.height = whole ? '60px' : '48px';
     iframe.srcdoc = frameDocument(code, { whole });
+    wrap.dataset.code = code;
     frames.set(id, iframe);
     wrap.append(iframe);
     if (!whole) {
         const bar = document.createElement('div');
         bar.className = 'rv-frame-bar';
         bar.innerHTML = '<button class="mini-btn" data-act="reload" title="Restart"><i class="fa-solid fa-rotate-right"></i></button><button class="mini-btn" data-act="source" title="View source"><i class="fa-solid fa-code"></i></button><button class="mini-btn" data-act="full" title="Fullscreen"><i class="fa-solid fa-expand"></i></button>';
-        bar.addEventListener('click', e => {
-            const act = e.target.closest('[data-act]')?.dataset.act;
-            if (act === 'reload') iframe.srcdoc = frameDocument(code);
-            if (act === 'full') wrap.classList.toggle('fullscreen');
-            if (act === 'source') {
-                const pre = wrap.querySelector('pre.rv-source');
-                if (pre) pre.remove();
-                else {
-                    const p = document.createElement('pre');
-                    p.className = 'rv-source';
-                    p.textContent = code;
-                    wrap.append(p);
-                }
-            }
-        });
         wrap.prepend(bar);
     }
     return wrap;
@@ -312,7 +307,7 @@ function picWidget(prompt, message, { streaming, onPic }) {
         wrap.append(img);
         const cap = document.createElement('figcaption');
         cap.innerHTML = '<button class="mini-btn" data-act="regen" title="Regenerate"><i class="fa-solid fa-rotate"></i></button>';
-        cap.querySelector('button').addEventListener('click', () => onPic?.(prompt, true));
+        cap.querySelector('button').dataset.prompt = prompt;
         wrap.append(cap);
         return wrap;
     }
@@ -321,7 +316,7 @@ function picWidget(prompt, message, { streaming, onPic }) {
     wrap.innerHTML = `<div class="rv-pic-shimmer"></div><figcaption><span class="rv-pic-prompt"></span><button class="mini-btn" data-act="gen"><i class="fa-solid fa-wand-magic-sparkles"></i> ${pending ? 'Painting…' : 'Generate'}</button></figcaption>`;
     wrap.querySelector('.rv-pic-prompt').textContent = prompt;
     if (pending || streaming) wrap.classList.add('busy');
-    wrap.querySelector('[data-act="gen"]').addEventListener('click', () => onPic?.(prompt, false));
+    wrap.querySelector('[data-act="gen"]').dataset.prompt = prompt;
     return wrap;
 }
 
@@ -334,7 +329,12 @@ export function setFrameRpcHandler(fn) {
 window.addEventListener('message', async e => {
     const data = e.data;
     if (!data || typeof data !== 'object' || !data.rvFrame) return;
-    const iframe = frames.get(data.rvFrame);
+    // Frames re-inserted as HTML by extensions (messageFormatting) are found by name.
+    let iframe = frames.get(data.rvFrame);
+    if (!iframe || !iframe.isConnected) {
+        iframe = document.querySelector(`iframe.rv-frame[name="${CSS.escape(data.rvFrame)}"]`);
+        if (iframe) frames.set(data.rvFrame, iframe);
+    }
     if (!iframe || iframe.contentWindow !== e.source) return;
     if (!iframe.isConnected) {
         frames.delete(data.rvFrame);
@@ -356,6 +356,43 @@ window.addEventListener('message', async e => {
         } catch { /* frame gone */ }
     }
 });
+
+// Delegated handlers, so widgets keep working when extensions re-insert message HTML.
+document.addEventListener('click', e => {
+    const btn = e.target.closest('.rv-frame-bar [data-act], .rv-pic [data-act]');
+    if (!btn) return;
+    const act = btn.dataset.act;
+    if (act === 'gen' || act === 'regen') {
+        const id = Number(btn.closest('.mes')?.getAttribute('mesid'));
+        if (Number.isFinite(id)) import('./imagegen.js').then(m => m.generateInlinePic(id, btn.dataset.prompt, act === 'regen'));
+        return;
+    }
+    const wrap = btn.closest('.rv-frame-wrap');
+    const code = wrap?.dataset.code ?? '';
+    const iframe = wrap?.querySelector('iframe.rv-frame');
+    if (act === 'reload' && iframe) iframe.srcdoc = frameDocument(code);
+    if (act === 'full') wrap.classList.toggle('fullscreen');
+    if (act === 'source') {
+        const pre = wrap.querySelector('pre.rv-source');
+        if (pre) pre.remove();
+        else {
+            const p = document.createElement('pre');
+            p.className = 'rv-source';
+            p.textContent = code;
+            wrap.append(p);
+        }
+    }
+});
+
+/** Fully processed message HTML as a string (SillyTavern's messageFormatting contract). */
+export function renderToHtml(text, opts = {}) {
+    const div = document.createElement('div');
+    const result = formatMessage(text, opts);
+    div.innerHTML = result.html;
+    hydrate(div, result, { message: opts.message });
+    delete div.dataset.rvscope;
+    return div.innerHTML;
+}
 
 // Forget frames that were removed from the DOM.
 setInterval(() => {

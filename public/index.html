@@ -15,10 +15,18 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,600;1,400&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=JetBrains+Mono:wght@400;600&display=swap">
     <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+    <link rel="stylesheet" href="css/st-vars.css">
     <link rel="stylesheet" href="css/app.css">
     <style id="rv-theme-vars"></style>
     <style id="custom-style"></style>
     <script src="vendor/jquery.js"></script>
+    <!-- Libraries SillyTavern provides globally; extensions rely on them. -->
+    <script src="vendor/lodash.js" defer></script>
+    <script src="vendor/handlebars.js" defer></script>
+    <script src="vendor/moment.js" defer></script>
+    <script src="vendor/localforage.js" defer></script>
+    <script src="vendor/showdown.js" defer></script>
+    <script src="vendor/popper.js" defer></script>
 </head>
 <body class="no-character">
     <div id="bg_layer" aria-hidden="true"><div id="bg_image"></div><div id="bg_aurora"></div></div>
@@ -78,12 +86,17 @@
                 <div id="typing-indicator" class="typing-indicator hidden"><span></span><span></span><span></span></div>
                 <div id="send_form" class="send-form">
                     <div id="attachment-tray" class="attachment-tray hidden"></div>
-                    <div class="send-row">
-                        <button class="icon-btn" id="options_button" title="Actions"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
+                    <div id="nonQRFormItems" class="send-row">
+                        <div id="leftSendForm" class="send-side">
+                            <button class="icon-btn" id="options_button" title="Actions"><i class="fa-solid fa-wand-magic-sparkles"></i></button>
+                            <div id="extensionsMenuButton" class="hidden"></div>
+                        </div>
                         <textarea id="send_textarea" rows="1" placeholder="Write your next chapter…" autocomplete="off" enterkeyhint="send"></textarea>
-                        <button class="icon-btn" id="btn-continue" title="Continue last message"><i class="fa-solid fa-forward"></i></button>
-                        <button id="send_but" class="send-btn" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
-                        <button id="mes_stop" class="send-btn stop hidden" title="Stop"><i class="fa-solid fa-stop"></i></button>
+                        <div id="rightSendForm" class="send-side">
+                            <button class="icon-btn" id="btn-continue" title="Continue last message"><i class="fa-solid fa-forward"></i></button>
+                            <button id="send_but" class="send-btn" title="Send"><i class="fa-solid fa-paper-plane"></i></button>
+                            <button id="mes_stop" class="send-btn stop hidden" title="Stop"><i class="fa-solid fa-stop"></i></button>
+                        </div>
                     </div>
                 </div>
                 <div id="extensionsMenu" class="popover-menu hidden" role="menu">
@@ -155,6 +168,40 @@
             <div id="extensions_settings2" class="extension_settings_column"></div>
         </div>
     </aside>
+
+    <!-- SillyTavern-compatible hosts that extensions look for -->
+    <div id="movingDivs"></div>
+    <template id="generic_draggable_template">
+        <div class="draggable">
+            <div class="dragTitle"></div>
+            <div class="panelControlBar flex-container">
+                <div class="fa-fw fa-solid fa-grip drag-grabber"></div>
+                <div class="fa-fw fa-solid fa-circle-xmark dragClose"></div>
+            </div>
+        </div>
+    </template>
+    <div id="st-dom" hidden>
+        <div id="FontBlurChatWidthBlock" name="FontBlurChatWidthBlock" data-st-park></div>
+        <div id="CustomCSS-block" data-st-park>
+            <h4 class="st-block-title">Custom CSS</h4>
+            <textarea id="customCSS" class="text_pole input mono" rows="8" spellcheck="false" placeholder="/* SillyTavern selectors like .mes, .mes_text, #chat, #send_form work here */"></textarea>
+        </div>
+        <div id="rm_api_block">
+            <select id="main_api"><option value="openai" selected>Chat Completion</option></select>
+            <select id="chat_completion_source"></select>
+            <select id="connection_profiles"></select>
+        </div>
+        <div id="options">
+            <a id="option_select_chat"></a><a id="option_start_new_chat"></a><a id="option_close_chat"></a>
+            <a id="option_impersonate"></a><a id="option_continue"></a><a id="option_regenerate"></a>
+        </div>
+        <div id="openai_settings">
+            <input id="temp_openai" type="number"><input id="top_p_openai" type="number"><input id="top_k_openai" type="number">
+            <input id="min_p_openai" type="number"><input id="freq_pen_openai" type="number"><input id="pres_pen_openai" type="number">
+            <input id="repetition_penalty_openai" type="number"><input id="openai_max_tokens" type="number"><input id="openai_max_context" type="number">
+            <input id="seed_openai" type="number">
+        </div>
+    </div>
 
     <div id="scrim" class="scrim"></div>
     <div id="toast-container" class="toast-container"></div>

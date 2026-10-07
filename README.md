@@ -94,12 +94,25 @@ Python code blocks get a **Run** button (or run automatically; see Settings → 
 
 Go to **Settings → Extensions**, paste a repository URL and choose **Install**. Reverie serves the extension from the same path SillyTavern would (`/scripts/extensions/third-party/<name>/`). It also rewrites the extension's imports of ST core files (`script.js`, `extensions.js`, `popup.js`, `slash-commands/*`, `utils.js`…) so they point at a compatibility layer that provides:
 
-- `SillyTavern.getContext()` (chat, characters, `eventSource` + ST event names, `extensionSettings`, `saveSettingsDebounced`, `generateQuietPrompt`, `generateRaw`, `setExtensionPrompt`, `substituteParams`, `registerMacro`, popups, variables, lorebook helpers…)
-- the `#extensions_settings`, `#extensionsMenu`, `#chat`, `#send_textarea` and `#send_form` elements, plus inline drawers, `toastr`, jQuery, `Popup` / `callGenericPopup`
-- slash commands (`SlashCommandParser.addCommandObject`, pipes, `{{pipe}}`) with the common built-ins (`/send`, `/trigger`, `/gen`, `/sys`, `/sendas`, `/echo`, `/setvar`, `/getvar`, `/imagine`, `/bg`, …)
-- `generate_interceptor` from the manifest
+- `SillyTavern.getContext()`: chat, characters, `eventSource` with SillyTavern's full event list, `extensionSettings`, `generateQuietPrompt`, `generateRaw`, `setExtensionPrompt`, `substituteParams`, macros, popups, variables, lorebook helpers, persona data, **Connection Manager** (`ConnectionManagerRequestService`, `extensionSettings.connectionManager`, backed by Reverie's connection profiles) and `ChatCompletionService`
+- SillyTavern's bundled libraries as globals and in `SillyTavern.libs`: lodash, Handlebars, moment, localforage, showdown, Fuse, Popper and DOMPurify
+- ST's page structure where extensions attach: `#send_form` / `#leftSendForm` / `#nonQRFormItems` / `#rightSendForm`, `#extensionsMenu`, `#extensions_settings`, `#movingDivs` with draggable panels, `#CustomCSS-block`, `#connection_profiles`, and ST's CSS variables
+- an STscript subset: pipes, `{{pipe}}`, `//` comments, `{: closures :}`, `/if`, `/inject` / `/flushinject` / `/listinjects` (ephemeral injections included), `/trigger await=true`, `/impersonate`, `/gen`, `/genraw`, `/sendas`, `/sys`, `/echo`, `/setvar` and friends, `/hide`, `/messages`, `/sampler-get` / `/sampler-set`, `/imagine`, `/bg`…
+- ST server endpoints that extensions call: image and file uploads (`user/images/...` paths), `/api/backends/chat-completions/generate`, world info lookup and background lists. API keys are never handed to extensions.
+- `generate_interceptor` from the manifest. Extensions load before the first chat opens, as in SillyTavern.
 
-If an extension imports a name Reverie doesn't provide, it gets a harmless no-op and a console warning instead of crashing. Extensions that need **SillyTavern's own server endpoints** (TTS backends, vector storage, ST's tokenizers and so on) or deep ST UI internals will only partly work. UI and prompt-shaping extensions are the most likely to work.
+If an extension imports a name Reverie doesn't provide, it gets a harmless no-op and a console warning instead of crashing.
+
+### Tested extensions
+
+| Works | Extensions |
+|---|---|
+| ✅ Tested working | Phone & PC, Offstage, Wardrobe, Surtitle, Context Lens, Extension Organizer, Silly Sim Tracker, Clickable Inputs, Guided Generations, Code Runner, Input History, LALib, Quick Persona |
+| ✅ Loads, UI appears (not exercised in depth) | Saucepan Seasoning, CSS Snippets, Custom Theme Style Inputs, Chat Top Bar (TopInfoBar), Inline Image Generation (needs its own image API settings) |
+| ✅ Built in instead | Preset Organizer & Prompt Checkboxes (sections, search, bulk toggles, checkboxes and the preset navigator are part of Reverie's prompt manager), Sampler Commands (`/sampler-get` and `/sampler-set` are native), Backup Manager (Settings → More → Backup), Background Manager (per-chat backgrounds are native) |
+| ⚪ Nothing to attach to | Persona Manager, Avatar Banner: they restyle SillyTavern's own persona and character panels, which Reverie replaces with its own. They load without errors. |
+| ⚠️ Skipped by default | Moonlit Echoes Theme is a reskin of SillyTavern's whole interface and rearranges Reverie's layout. Use **Load anyway** if you want it. |
+| ❌ Needs ST server plugin | WebSearch calls SillyTavern's search server plugin, which Reverie doesn't include. |
 
 ## Where things are stored
 

@@ -15,10 +15,17 @@
   "license": "AGPL-3.0",
   "dependencies": {
     "@fortawesome/fontawesome-free": "^6.7.2",
+    "@popperjs/core": "^2.11.8",
     "dompurify": "^3.2.6",
     "express": "^5.1.0",
+    "fuse.js": "^7.5.0",
+    "handlebars": "^4.7.10",
     "jquery": "^3.7.1",
+    "localforage": "^1.10.0",
+    "lodash": "^4.18.1",
     "marked": "^15.0.12",
+    "moment": "^2.31.0",
+    "showdown": "^2.1.0",
     "tar": "^7.4.3"
   }
 }

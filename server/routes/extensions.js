@@ -34,6 +34,8 @@ async function download(info, target, branch) {
         const args = ['clone', '--depth', '1'];
         if (branch) args.push('--branch', branch);
         await run('git', [...args, `${info.url}.git`, target], { timeout: 120000 });
+        // Remember the source too, so updates still work after a backup restore (which drops .git).
+        await fsp.writeFile(path.join(target, '.reverie-source.json'), JSON.stringify({ url: info.url, branch: branch || null }));
         return;
     }
     // No git binary: fall back to a tarball download (GitHub / GitLab).
@@ -119,7 +121,7 @@ apiRouter.delete('/:name', async (req, res) => {
 serveRouter.get(/^\/scripts\/extensions\/third-party\/([^/]+)\/(.+)$/, async (req, res, next) => {
     const name = safeName(decodeURIComponent(req.params[0]));
     const base = within(DIRS.extensions, name);
-    const rel = decodeURIComponent(req.params[1]);
+    const rel = decodeURIComponent(req.params[1]).replace(/^\/+/, '');
     const file = path.resolve(base, rel);
     if (!file.startsWith(base + path.sep) || rel.split('/').some(p => p === '.git')) return res.status(403).end();
     if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return next();

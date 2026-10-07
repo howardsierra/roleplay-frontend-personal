@@ -7,7 +7,7 @@ import { loadCharacters, renderLibrary, openCharacter, importCharacter, createCh
 import { bindChatEvents, sendMessage, generate, stopGeneration, autoGrow, showPromptPreview, swipeRight } from './chat.js';
 import { initSettings, openSettings } from './panels/settings.js';
 import { openImageStudio, openGallery } from './imagegen.js';
-import { installCompat, frameRpc, executeSlashCommands } from './st/compat.js';
+import { installCompat, installStDom, frameRpc, executeSlashCommands, registerNativeOverrides } from './st/compat.js';
 import { loadExtensions } from './st/extensions-loader.js';
 import { setFrameRpcHandler } from './render.js';
 import { initLayout } from './layout.js';
@@ -165,6 +165,8 @@ async function boot() {
     setFrameRpcHandler(frameRpc);
     await loadSettings();
     await eventSource.emit(event_types.SETTINGS_LOADED_BEFORE, state.settings);
+    state.providers = await (await import('./api.js')).api.get('providers').catch(() => null);
+    installStDom();
     applyTheme();
     initSettings();
     coreActions();
@@ -177,12 +179,14 @@ async function boot() {
     await eventSource.emit(event_types.SETTINGS_LOADED_AFTER, state.settings);
     await eventSource.emit(event_types.APP_INITIALIZED);
 
+    // Like SillyTavern: extensions load before the first chat opens, so they see CHAT_CHANGED for it.
+    await loadExtensions();
+    registerNativeOverrides();
+    await eventSource.emit(event_types.APP_READY);
+
     const last = state.settings.lastCharacterId;
     if (last && state.characters.some(c => c.id === last)) await openCharacter(last);
-
     document.body.classList.add('ready');
-    await loadExtensions();
-    await eventSource.emit(event_types.APP_READY);
 
     if (!state.settings.onboarded) await welcome();
     else if (!state.settings.connection.model) {

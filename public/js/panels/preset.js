@@ -1,4 +1,4 @@
-import { state } from '../state.js';
+import { state, saveSettingsDebounced } from '../state.js';
 import { listPresets, selectPreset, savePresetDebounced, savePreset, createPreset, deletePreset } from '../preset-store.js';
 import { importPreset, toSillyTavern, toLumiverse, defaultPreset, makeBlock, MARKER_NAMES, STRUCTURAL_MARKERS } from '../presets.js';
 import { estimateTokens } from '../prompt.js';
@@ -46,7 +46,8 @@ export async function render(body) {
         }, 'danger'],
     ]));
 
-    body.append(el('div', { class: 'row gap sticky-bar' }, picker, moreBtn));
+    const navBtn = el('button', { class: 'icon-btn', title: 'Browse presets', onclick: () => presetNavigator(presets, rerender) }, icon('table-cells-large'));
+    body.append(el('div', { class: 'row gap sticky-bar' }, picker, navBtn, moreBtn));
 
     // ----- Prompt variables (Lumiverse) -----
     const varBlocks = p.blocks.filter(b => b.variables?.length);
@@ -70,19 +71,87 @@ export async function render(body) {
             field('Seed', numberInput(s.seed, change(v => { s.seed = v; }), { min: -1 }))),
         toggle('Stream responses', s.stream, change(v => { s.stream = v; }))));
 
-    // ----- Prompt manager -----
-    const list = el('div', { class: 'block-list' });
+    // ----- Prompt manager (with Preset Organizer-style sections, search and bulk toggles) -----
+    const ui = (state.settings.ui ??= {});
+    const list = el('div', { class: `block-list${ui.promptCheckboxes ? ' checkboxes' : ''}` });
     const tokenNote = el('span', { class: 'hint' });
+    const chips = el('div', { class: 'section-chips' });
+    const search = el('input', { class: 'input', type: 'search', placeholder: 'Search prompts…' });
+    const collapsedKey = `rv-collapsed-${p.id}`;
+    let collapsed = new Set();
+    try { collapsed = new Set(JSON.parse(localStorage.getItem(collapsedKey) || '[]')); } catch { /* ignore */ }
+    const saveCollapsed = () => { try { localStorage.setItem(collapsedKey, JSON.stringify([...collapsed])); } catch { /* ignore */ } };
+    const dividerRx = (() => { try { return new RegExp(ui.dividerPattern || '^\\s*(={2,}|-{3,}|#{1,3}\\s|━|\\[[^\\]]+\\]\\s*$)'); } catch { return /^\s*(={2,}|-{3,}|#{1,3}\s|━)/; } })();
+    const isHeader = b => b.marker === 'category' || (!b.marker && dividerRx.test(b.name || '') && !String(b.content || '').trim());
+    const sections = () => {
+        const out = [];
+        let cur = null;
+        p.blocks.forEach((b, i) => {
+            if (isHeader(b)) { cur = { header: b, index: i, members: [] }; out.push(cur); }
+            else if (cur) cur.members.push(b);
+        });
+        return out;
+    };
     const renderBlocks = () => {
+        const q = search.value.trim().toLowerCase();
+        const secs = sections();
+        const bySection = new Map();
+        for (const sec of secs) for (const m of sec.members) bySection.set(m, sec);
         let category = null;
         list.replaceChildren(...p.blocks.map((b, i) => {
             if (b.marker === 'category') category = b;
             const row = blockRow(p, b, i, category, renderBlocks);
+            const sec = secs.find(x => x.header === b);
+            if (sec) {
+                row.classList.add('section-header');
+                const on = sec.members.filter(m => m.enabled).length;
+                const total = sec.members.length;
+                const caret = el('button', { class: 'section-caret', title: 'Collapse / expand', onclick: () => {
+                    if (collapsed.has(b.id)) collapsed.delete(b.id); else collapsed.add(b.id);
+                    saveCollapsed();
+                    renderBlocks();
+                } }, icon(collapsed.has(b.id) && !q ? 'chevron-right' : 'chevron-down'));
+                const badge = el('span', { class: `section-badge${on === total && total ? ' all' : on === 0 ? ' none' : ''}` }, `${on}/${total}`);
+                const bulk = el('button', { class: 'mini-btn', title: on === total ? 'Disable section' : 'Enable section', onclick: () => {
+                    const target = on !== total;
+                    for (const m of sec.members) m.enabled = target;
+                    savePresetDebounced();
+                    renderBlocks();
+                } }, icon(on === total ? 'toggle-on' : 'toggle-off'));
+                row.querySelector('.drag-handle').after(caret);
+                row.querySelector('.block-badges').prepend(badge);
+                row.append(bulk);
+            }
+            const owner = bySection.get(b);
+            if (q) {
+                const hit = String(b.name || '').toLowerCase().includes(q) || String(b.content || '').toLowerCase().includes(q);
+                const sectionHit = sec && sec.members.some(m => String(m.name || '').toLowerCase().includes(q) || String(m.content || '').toLowerCase().includes(q));
+                if (!hit && !sectionHit) row.classList.add('hidden');
+                if (hit) {
+                    const nameEl = row.querySelector('.block-name');
+                    const text = nameEl.textContent;
+                    const at = text.toLowerCase().indexOf(q);
+                    if (at >= 0) nameEl.replaceChildren(text.slice(0, at), el('mark', {}, text.slice(at, at + q.length)), text.slice(at + q.length));
+                }
+            } else if (owner && collapsed.has(owner.header.id)) {
+                row.classList.add('hidden');
+            }
             return row;
         }));
+        chips.replaceChildren(...secs.map((sec, n) => el('button', {
+            class: 'section-chip', style: { '--chip-hue': String((n * 47) % 360) },
+            onclick: () => {
+                collapsed.delete(sec.header.id);
+                saveCollapsed();
+                renderBlocks();
+                list.querySelector(`.block-row[data-index="${sec.index}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            },
+        }, (sec.header.name || 'Section').replace(/^[\s=\-#━\[]+|[\s=\-#━\]]+$/g, '') || 'Section', el('span', {}, `${sec.members.filter(m => m.enabled).length}/${sec.members.length}`))));
+        chips.classList.toggle('hidden', !secs.length);
         const total = p.blocks.filter(b => b.enabled && !STRUCTURAL_MARKERS.has(b.marker)).reduce((n, b) => n + estimateTokens(b.content), 0);
         tokenNote.textContent = `≈ ${total.toLocaleString()} tokens of preset text enabled`;
     };
+    search.addEventListener('input', renderBlocks);
     renderBlocks();
     enableDrag(list, p, renderBlocks);
 
@@ -96,6 +165,13 @@ export async function render(body) {
                 editBlock(p, b, renderBlocks);
             } }, icon('plus'), 'Add prompt'),
             el('button', { class: 'btn small', onclick: async () => {
+                const name = await promptDialog('Section name', '===== New section =====', { title: 'Add section divider' });
+                if (!name) return;
+                p.blocks.splice(Math.max(0, p.blocks.findIndex(x => x.marker === 'chat_history')), 0, makeBlock({ name, content: '', enabled: true }));
+                renderBlocks();
+                savePresetDebounced();
+            } }, icon('grip-lines'), 'Add section'),
+            el('button', { class: 'btn small', onclick: async () => {
                 const missing = Object.keys(MARKER_NAMES).filter(m => m !== 'category' && !p.blocks.some(b => b.marker === m));
                 if (!missing.length) return toast('All markers are already present', 'info');
                 const choice = await new Promise(resolve => popMenu(document.activeElement, missing.map(m => ['location-dot', MARKER_NAMES[m], () => resolve(m)])));
@@ -104,8 +180,20 @@ export async function render(body) {
                 savePresetDebounced();
             } }, icon('location-dot'), 'Add marker'),
             el('button', { class: 'btn small', onclick: showPromptPreview }, icon('eye'), 'Preview prompt')),
+        el('div', { class: 'row gap pm-toolbar' },
+            search,
+            el('button', { class: 'icon-btn small', title: 'Collapse all sections', onclick: () => { for (const sec of sections()) collapsed.add(sec.header.id); saveCollapsed(); renderBlocks(); } }, icon('compress')),
+            el('button', { class: 'icon-btn small', title: 'Expand all sections', onclick: () => { collapsed.clear(); saveCollapsed(); renderBlocks(); } }, icon('expand')),
+            el('button', { class: `icon-btn small${ui.promptCheckboxes ? ' active' : ''}`, title: 'Checkbox style', onclick: e => {
+                ui.promptCheckboxes = !ui.promptCheckboxes;
+                saveSettingsDebounced();
+                list.classList.toggle('checkboxes', ui.promptCheckboxes);
+                e.currentTarget.classList.toggle('active', ui.promptCheckboxes);
+            } }, icon('square-check'))),
+        chips,
         tokenNote,
-        list));
+        list,
+        el('p', { class: 'hint' }, 'Tip: a prompt with no text whose name looks like a divider (===== Style =====, --- NSFW ---, ## Jailbreaks) becomes a collapsible section.')));
 
     // ----- Behaviour -----
     const b = p.behavior;
@@ -270,6 +358,37 @@ async function editBlock(p, block, refresh) {
     } else return;
     refresh();
     savePresetDebounced();
+}
+
+async function presetNavigator(presets, refresh) {
+    const ui = (state.settings.ui ??= {});
+    const favs = new Set(ui.favPresets || []);
+    const grid = el('div', { class: 'preset-grid' });
+    const q = el('input', { class: 'input', type: 'search', placeholder: 'Search presets…' });
+    let close = () => {};
+    const render = () => {
+        const term = q.value.trim().toLowerCase();
+        const items = presets.filter(x => !term || x.name.toLowerCase().includes(term))
+            .sort((a, b) => (favs.has(b.id) - favs.has(a.id)) || a.name.localeCompare(b.name));
+        grid.replaceChildren(...items.map(x => el('div', { class: `preset-tile${x.id === state.preset.id ? ' current' : ''}` },
+            el('button', { class: 'preset-tile-main', onclick: async () => {
+                await savePreset();
+                await selectPreset(x.id);
+                close();
+                refresh();
+            } }, el('span', { class: 'preset-mono' }, x.name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || '✦'),
+                el('span', { class: 'preset-tile-name' }, x.name),
+                el('span', { class: 'hint' }, x.source === 'sillytavern' ? 'SillyTavern' : x.source === 'lumiverse' ? 'Lumiverse' : 'Reverie')),
+            el('button', { class: `preset-fav${favs.has(x.id) ? ' on' : ''}`, title: 'Favourite', onclick: () => {
+                if (favs.has(x.id)) favs.delete(x.id); else favs.add(x.id);
+                ui.favPresets = [...favs];
+                saveSettingsDebounced();
+                render();
+            } }, icon('star')))));
+    };
+    q.addEventListener('input', render);
+    render();
+    modal({ title: 'Presets', content: el('div', { class: 'stack' }, q, grid), wide: true, buttons: [], onOpen: (_b, c) => { close = c; setTimeout(() => q.focus(), 60); } });
 }
 
 async function importFlow() {

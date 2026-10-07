@@ -4,7 +4,14 @@ import { state } from '../state.js';
 import { eventSource, event_types } from '../events.js';
 import { toast } from '../ui.js';
 
-export const loaded = new Map(); // name -> { manifest, error? }
+export const loaded = new Map(); // name -> { manifest, error?, skipped? }
+
+// Extensions that restyle SillyTavern's own interface wholesale. Reverie shares ST's element ids,
+// so their CSS rearranges Reverie's layout; they are skipped unless the user opts in.
+export const UI_RESKINS = {
+    'SillyTavern-MoonlitEchoesTheme': 'Moonlit Echoes is a complete reskin of SillyTavern\'s own interface. Loaded here, it rearranges Reverie\'s layout.',
+};
+const reskinReason = ext => UI_RESKINS[ext.name] || null;
 const interceptors = [];
 
 export function getInterceptors() {
@@ -24,8 +31,14 @@ export async function loadExtensions() {
         return;
     }
     const disabled = new Set(state.settings.extensions.disabled || []);
+    const forced = new Set(state.settings.extensions.forceLoad || []);
     for (const ext of list) {
         if (disabled.has(ext.name)) continue;
+        const reason = reskinReason(ext);
+        if (reason && !forced.has(ext.name)) {
+            loaded.set(ext.name, { manifest: ext.manifest, skipped: reason });
+            continue;
+        }
         await loadOne(ext);
     }
     await eventSource.emit(event_types.EXTENSIONS_FIRST_LOAD);

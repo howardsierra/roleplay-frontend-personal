@@ -10,6 +10,7 @@ import chatsRouter from './routes/chats.js';
 import aiRouter from './routes/ai.js';
 import filesRouter from './routes/files.js';
 import { apiRouter as extensionsApi, serveRouter as extensionsServe } from './routes/extensions.js';
+import stCompatRouter, { USER_FILES } from './routes/st-compat.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -109,6 +110,8 @@ app.use((req, res, next) => {
 });
 
 // ---------- API ----------
+// SillyTavern-compatible endpoints first: some share a prefix with Reverie's own routes.
+app.use('/api', stCompatRouter);
 app.use('/api/characters', charactersRouter);
 app.use('/api/chats', chatsRouter);
 app.use('/api/presets', collectionRouter(DIRS.presets, { summary: p => ({ id: p.id, name: p.name, source: p.source, updated: p.updated }) }));
@@ -125,10 +128,21 @@ const staticOpts = { fallthrough: true, index: false, maxAge: '7d' };
 app.use('/files/avatars', express.static(DIRS.avatars, staticOpts));
 app.use('/files/backgrounds', express.static(DIRS.backgrounds, staticOpts));
 app.use('/files/images', express.static(DIRS.images, staticOpts));
+// SillyTavern-style media paths returned by the ST-compatible upload endpoints.
+app.use('/user/images', express.static(DIRS.images, staticOpts));
+app.use('/user/files', express.static(USER_FILES, staticOpts));
 const vendor = {
     'jquery.js': 'jquery/dist/jquery.min.js',
     'purify.js': 'dompurify/dist/purify.es.mjs',
     'marked.js': 'marked/lib/marked.esm.js',
+    // Libraries SillyTavern bundles (lib.js) and extensions expect to find.
+    'lodash.js': 'lodash/lodash.min.js',
+    'handlebars.js': 'handlebars/dist/handlebars.min.js',
+    'moment.js': 'moment/min/moment.min.js',
+    'localforage.js': 'localforage/dist/localforage.min.js',
+    'showdown.js': 'showdown/dist/showdown.min.js',
+    'popper.js': '@popperjs/core/dist/umd/popper.min.js',
+    'fuse.js': 'fuse.js/dist/fuse.min.mjs',
 };
 for (const [name, rel] of Object.entries(vendor)) {
     const file = path.join(ROOT, 'node_modules', rel);

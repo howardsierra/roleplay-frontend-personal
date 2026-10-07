@@ -207,7 +207,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
             tail.push({ role: 'system', content: substituteParams(preset.behavior.continueNudge, { lastChatMessage: cont }) });
         }
     } else if (type === 'impersonate') {
-        tail.push({ role: 'system', content: substituteParams(preset.behavior.impersonationPrompt) });
+        tail.push({ role: 'system', content: substituteParams(quietPrompt || preset.behavior.impersonationPrompt) });
         prefill = substituteParams(preset.completion.assistantImpersonation);
     } else if (type === 'quiet') {
         if (quietPrompt) tail.push({ role: 'system', content: substituteParams(quietPrompt) });
