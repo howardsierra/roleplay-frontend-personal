@@ -1,0 +1,11 @@
+services:
+  reverie:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_PASSWORD=change-me
+      - DATA_DIR=/data
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

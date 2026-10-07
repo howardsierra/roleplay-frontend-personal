@@ -1,0 +1,24 @@
+{
+  "name": "Loom Test",
+  "description": "A tiny Loom preset with prompt variables",
+  "schemaVersion": 1,
+  "blocks": [
+    { "id": "cat1", "name": "━ Core", "content": "", "role": "system", "enabled": true, "position": "pre_history", "depth": 0, "marker": "category", "isLocked": false, "color": null, "injectionTrigger": [], "group": null, "categoryMode": "radio" },
+    { "id": "main", "name": "Main", "content": "You are {{char}}. Tone: {{var::tone}}. Length: {{var::length}} words.{{var::extras}}", "role": "system", "enabled": true, "position": "pre_history", "depth": 0, "marker": null, "isLocked": false, "color": null, "injectionTrigger": [], "group": null,
+      "variables": [
+        { "id": "v1", "name": "tone", "label": "Tone", "type": "select", "defaultValue": "o1", "options": [{ "id": "o1", "label": "Dark", "value": "dark and moody" }, { "id": "o2", "label": "Light", "value": "light-hearted" }] },
+        { "id": "v2", "name": "length", "label": "Length", "type": "slider", "defaultValue": 300, "min": 100, "max": 1000, "step": 50 },
+        { "id": "v3", "name": "extras", "label": "Extras", "type": "multiselect", "defaultValue": [], "options": [{ "id": "a", "label": "A", "value": " Alpha." }, { "id": "b", "label": "B", "value": " Beta." }], "separator": "" }
+      ] },
+    { "id": "desc", "name": "Description", "content": "{{description}}", "role": "system", "enabled": true, "position": "pre_history", "depth": 0, "marker": null, "isLocked": false, "color": null, "injectionTrigger": [], "group": null },
+    { "id": "hist", "name": "Chat History", "content": "", "role": "system", "enabled": true, "position": "pre_history", "depth": 0, "marker": "chat_history", "isLocked": false, "color": null, "injectionTrigger": [], "group": null },
+    { "id": "deep", "name": "Depth note", "content": "Remember the weather.", "role": "system", "enabled": true, "position": "in_history", "depth": 1, "marker": null, "isLocked": false, "color": null, "injectionTrigger": [], "group": null }
+  ],
+  "samplerOverrides": { "enabled": true, "maxTokens": 1500, "contextSize": 32000, "temperature": 0.85, "topP": null, "minP": 0.05, "topK": null, "frequencyPenalty": null, "presencePenalty": null, "repetitionPenalty": null, "streaming": true },
+  "customBody": { "enabled": false, "rawJson": "{}" },
+  "promptBehavior": { "continueNudge": "[Continue]", "impersonationPrompt": "[Be {{user}}]", "newChatPrompt": "[Start]", "groupNudge": "", "sendIfEmpty": "" },
+  "completionSettings": { "assistantPrefill": "", "continuePrefill": false, "continuePostfix": " ", "namesBehavior": 0, "squashSystemMessages": false },
+  "advancedSettings": { "seed": -1, "customStopStrings": ["</end>"] },
+  "promptVariables": { "main": { "tone": "o2", "extras": ["b"] } },
+  "extensions": { "regex_scripts": [{ "id": "r1", "scriptName": "strip", "findRegex": "/<thinking>[\\s\\S]*?<\\/thinking>/g", "replaceString": "", "placement": [2], "disabled": false }] }
+}

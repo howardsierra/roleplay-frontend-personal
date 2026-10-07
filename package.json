@@ -1,0 +1,24 @@
+{
+  "name": "reverie",
+  "version": "0.1.0",
+  "description": "A self-hosted, phone-friendly roleplay frontend compatible with SillyTavern presets, themes, cards & extensions, and Lumiverse (Loom) presets.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "AGPL-3.0",
+  "dependencies": {
+    "@fortawesome/fontawesome-free": "^6.7.2",
+    "dompurify": "^3.2.6",
+    "express": "^5.1.0",
+    "jquery": "^3.7.1",
+    "marked": "^15.0.12",
+    "tar": "^7.4.3"
+  }
+}

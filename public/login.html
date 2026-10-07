@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#0c0a13">
+    <title>Reverie · Sign in</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Cormorant+Garamond:wght@600&display=swap">
+    <link rel="stylesheet" href="css/login.css">
+</head>
+<body>
+    <div class="aurora"></div>
+    <form class="card" id="login">
+        <img src="icons/icon.svg" alt="" class="logo">
+        <h1>Reverie</h1>
+        <p>Enter your password to continue.</p>
+        <input type="password" id="password" placeholder="Password" autocomplete="current-password" autofocus required>
+        <button type="submit">Enter</button>
+        <div class="error" id="error"></div>
+    </form>
+    <script>
+        document.getElementById('login').addEventListener('submit', async e => {
+            e.preventDefault();
+            const error = document.getElementById('error');
+            error.textContent = '';
+            const res = await fetch('api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: document.getElementById('password').value }),
+            });
+            if (res.ok) location.href = './';
+            else error.textContent = (await res.json().catch(() => ({}))).error || 'Login failed';
+        });
+    </script>
+</body>
+</html>
