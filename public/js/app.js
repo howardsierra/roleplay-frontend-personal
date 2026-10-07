@@ -10,6 +10,7 @@ import { openImageStudio, openGallery } from './imagegen.js';
 import { installCompat, frameRpc, executeSlashCommands } from './st/compat.js';
 import { loadExtensions } from './st/extensions-loader.js';
 import { setFrameRpcHandler } from './render.js';
+import { initLayout } from './layout.js';
 import { el, icon, toast, modal, toggleDrawer, closeAllDrawers, openDrawer, isMobile } from './ui.js';
 
 const $id = id => document.getElementById(id);
@@ -42,9 +43,15 @@ function bindUi() {
     $id('scrim').addEventListener('click', closeAllDrawers);
     document.querySelectorAll('.drawer-close').forEach(b => b.addEventListener('click', closeAllDrawers));
     document.addEventListener('click', e => {
-        const action = e.target.closest('[data-action]')?.dataset.action;
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+        const action = target.dataset.action;
+        if (target.closest('summary')) e.preventDefault();
         if (action === 'import-character') importCharacter();
         if (action === 'create-character') createCharacter();
+        if (action === 'new-story') newStory();
+        if (action === 'gallery') { closeAllDrawers(); openGallery(); }
+        if (action === 'open-settings') openSettings(target.dataset.tab);
     });
     $id('char-search').addEventListener('input', renderLibrary);
 
@@ -104,6 +111,33 @@ function bindUi() {
     }
 }
 
+async function newStory() {
+    closeAllDrawers();
+    if (!state.characters.length) return importCharacter();
+    let close = () => {};
+    const grid = el('div', { class: 'char-grid picker' }, state.characters.map(c => {
+        const tile = el('button', { class: 'char-tile', title: c.name },
+            el('div', { class: 'char-tile-img', style: { backgroundImage: `url("${c.avatar ? `files/avatars/${encodeURIComponent(c.avatar)}` : 'icons/icon.svg'}")` } }),
+            el('div', { class: 'char-tile-info' }, el('div', { class: 'char-tile-name' }, c.name)));
+        tile.addEventListener('click', async () => {
+            close();
+            await openCharacter(c.id);
+            await newChat();
+        });
+        return tile;
+    }));
+    modal({
+        title: 'Begin a new story',
+        content: el('div', { class: 'stack' }, el('p', { class: 'hint' }, 'Choose who this story is with.'), grid,
+            el('div', { class: 'row gap wrap' },
+                el('button', { class: 'btn small', onclick: () => { close(); importCharacter(); } }, icon('file-import'), 'Import a card'),
+                el('button', { class: 'btn small', onclick: () => { close(); createCharacter(); } }, icon('plus'), 'Create a character'))),
+        wide: true,
+        buttons: [],
+        onOpen: (_b, c) => { close = c; },
+    });
+}
+
 async function welcome() {
     const name = el('input', { class: 'input', type: 'text', placeholder: 'Your name', value: '' });
     const content = el('div', { class: 'stack welcome' },
@@ -138,6 +172,7 @@ async function boot() {
     bindChatEvents();
     await ensurePreset();
     await loadCharacters();
+    initLayout();
     await eventSource.emit(event_types.SETTINGS_LOADED, state.settings);
     await eventSource.emit(event_types.SETTINGS_LOADED_AFTER, state.settings);
     await eventSource.emit(event_types.APP_INITIALIZED);

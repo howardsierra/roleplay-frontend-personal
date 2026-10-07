@@ -9,6 +9,9 @@ import { STRUCTURAL_MARKERS } from './presets.js';
 export const extension_prompt_types = { NONE: -1, IN_PROMPT: 0, IN_CHAT: 1, BEFORE_PROMPT: 2 };
 export const extension_prompt_roles = { SYSTEM: 0, USER: 1, ASSISTANT: 2 };
 export const extensionPrompts = {};
+let lastLoreHits = [];
+/** Lorebook entries activated by the most recent real (non-preview) prompt build. */
+export const lastLore = () => lastLoreHits;
 
 export function setExtensionPrompt(key, value, position = 0, depth = 4, scan = false, role = 0, filter = null) {
     extensionPrompts[key] = { value: String(value ?? ''), position: Number(position), depth: Number(depth), scan: !!scan, role: Number(role), filter };
@@ -61,6 +64,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     const history = chat.filter(m => !m.is_system);
     const lore = await scanWorldInfo(history, { contextTokens: contextSize });
     if (lore.activated.length) eventSource.emit(event_types.WORLD_INFO_ACTIVATED, lore.activated);
+    if (!dryRun) lastLoreHits = lore.activated;
 
     const before = [];
     const after = [];

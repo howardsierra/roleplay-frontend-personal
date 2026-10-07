@@ -2,7 +2,8 @@ import { api } from '../api.js';
 import { state, saveSettingsDebounced, chatMetadata, saveChat } from '../state.js';
 import { BUILTIN_THEMES, applyTheme, importTheme, exportTheme, currentTheme } from '../themes.js';
 import { printMessages } from '../chat.js';
-import { el, icon, field, select, textArea, toggle, slider, section, toast, pickFile, download, confirmDialog, promptDialog, debounce } from '../ui.js';
+import { applyBranding } from '../layout.js';
+import { el, icon, field, select, textArea, textInput, toggle, slider, section, toast, pickFile, download, confirmDialog, promptDialog, debounce } from '../ui.js';
 
 let rootBody;
 const rerender = () => { rootBody.replaceChildren(); render(rootBody); };
@@ -56,7 +57,7 @@ export async function render(body) {
             onclick: () => {
                 a.themeName = t.name;
                 a.theme = t.builtin ? null : structuredClone(t);
-                if (!t.builtin && t.chat_display) a.chatStyle = t.chat_display;
+                if (t.chat_display) a.chatStyle = t.chat_display;
                 save();
                 rerender();
             },
@@ -122,6 +123,21 @@ export async function render(body) {
         section('Colours', colorsBox,
             slider('Panel blur', editing.blur_strength ?? 14, { min: 0, max: 40, step: 1, onChange: v => { editing.blur_strength = v; a.theme = editing; save(); } })),
         await backgroundSection(a, save),
+        section('Sidebar',
+            field('Title', textInput(a.brandTitle || '', v => { a.brandTitle = v; saveSettingsDebounced(); applyBranding(); }, { placeholder: 'Reverie' })),
+            field('Tagline', textInput(a.brandTagline ?? '', v => { a.brandTagline = v; saveSettingsDebounced(); applyBranding(); }, { placeholder: 'where stories begin' })),
+            el('div', { class: 'row gap wrap' },
+                el('button', { class: 'btn small', onclick: async () => {
+                    const file = await pickFile('image/*');
+                    if (!file) return;
+                    const res = await api.upload(`images?name=${encodeURIComponent(file.name)}`, file);
+                    a.sidebarArt = res.url;
+                    saveSettingsDebounced();
+                    applyBranding();
+                    rerender();
+                } }, icon('image'), a.sidebarArt ? 'Change sidebar art' : 'Add sidebar art (a mascot, a sigil…)'),
+                a.sidebarArt ? el('button', { class: 'btn small danger', onclick: () => { a.sidebarArt = ''; saveSettingsDebounced(); applyBranding(); rerender(); } }, icon('xmark'), 'Remove art') : null),
+            a.sidebarArt ? field('Art caption', textInput(a.sidebarArtCaption || '', v => { a.sidebarArtCaption = v; saveSettingsDebounced(); applyBranding(); }, { placeholder: "Haven's Pet" })) : null),
         section('Custom CSS',
             textArea(a.customCss || '', debounce(v => { a.customCss = v; save(); }, 400), { rows: 8, class: 'input mono', placeholder: '/* SillyTavern selectors like .mes, .mes_text, #chat, #send_form work here */' }),
             el('p', { class: 'hint' }, 'Applied after the theme\'s own custom_css.')));

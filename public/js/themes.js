@@ -33,6 +33,43 @@ export const BUILTIN_THEMES = [
     },
     {
         ...base,
+        name: 'Rose Haven',
+        main_text_color: 'rgba(246, 228, 232, 1)',
+        italics_text_color: 'rgba(226, 170, 190, 1)',
+        underline_text_color: 'rgba(255, 196, 214, 1)',
+        quote_text_color: 'rgba(255, 255, 255, 1)',
+        blur_tint_color: 'rgba(58, 18, 34, 0.86)',
+        chat_tint_color: 'rgba(40, 10, 22, 0.4)',
+        user_mes_blur_tint_color: 'rgba(120, 40, 70, 0.34)',
+        bot_mes_blur_tint_color: 'rgba(66, 20, 38, 0.7)',
+        shadow_color: 'rgba(0, 0, 0, 0.3)',
+        shadow_width: 1,
+        border_color: 'rgba(244, 167, 196, 0.22)',
+        rv_bg: '#2a0b18',
+        rv_accent: '#e88aac',
+        rv_accent2: '#b0386a',
+        rv_aurora: ['#7a1f45', '#4a0f2a', '#8f2d55'],
+        chat_display: 'document',
+        custom_css: `
+:root { --rv-ui-font: 'Lora', Georgia, serif; --rv-blossom: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cg fill='%23f6a9c4' fill-opacity='.92'%3E%3Cpath id='p' d='M50 50C40 38 38 22 46 12c3 5 5 6 8 0 8 10 6 26-4 38z'/%3E%3Cuse href='%23p' transform='rotate(72 50 50)'/%3E%3Cuse href='%23p' transform='rotate(144 50 50)'/%3E%3Cuse href='%23p' transform='rotate(216 50 50)'/%3E%3Cuse href='%23p' transform='rotate(288 50 50)'/%3E%3C/g%3E%3Ccircle cx='50' cy='50' r='7' fill='%23ffe3ec'/%3E%3Cg fill='%23c2185b'%3E%3Ccircle cx='50' cy='40' r='1.8'/%3E%3Ccircle cx='59' cy='47' r='1.8'/%3E%3Ccircle cx='56' cy='58' r='1.8'/%3E%3Ccircle cx='44' cy='58' r='1.8'/%3E%3Ccircle cx='41' cy='47' r='1.8'/%3E%3C/g%3E%3C/svg%3E"); }
+.brand-title { font-style: italic; }
+.sidebar::after, .sheet-panel::after, #send_form::before {
+  content: ''; position: absolute; pointer-events: none; background-repeat: no-repeat; z-index: 0;
+  background-image: var(--rv-blossom), var(--rv-blossom), var(--rv-blossom), var(--rv-blossom);
+}
+.sidebar::after { left: -14px; bottom: -10px; width: 170px; height: 150px; opacity: .85;
+  background-size: 64px, 40px, 30px, 22px; background-position: 6px 70px, 60px 102px, 4px 30px, 92px 70px; }
+.sheet-panel::after { right: -10px; bottom: -12px; width: 150px; height: 120px; opacity: .8;
+  background-size: 56px, 34px, 24px, 18px; background-position: 88px 60px, 52px 86px, 112px 22px, 30px 98px; }
+#send_form { position: relative; }
+#send_form::before { left: -18px; top: -16px; width: 70px; height: 52px; opacity: .9;
+  background-size: 34px, 22px, 0, 0; background-position: 0 6px, 30px 0; }
+.sidebar-art img { filter: drop-shadow(0 10px 24px rgba(244, 114, 182, .35)); }
+#bg_layer::after { content: ''; position: absolute; inset: 0; opacity: .05; background-image: var(--rv-blossom); background-size: 120px; }
+`,
+    },
+    {
+        ...base,
         name: 'Moonlit Parchment',
         main_text_color: 'rgba(43, 37, 33, 1)',
         italics_text_color: 'rgba(118, 98, 80, 1)',

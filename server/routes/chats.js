@@ -2,7 +2,7 @@
 // line 1 = header { user_name, character_name, create_date, chat_metadata }, then one message per line.
 import express from 'express';
 import fsp from 'node:fs/promises';
-import { DIRS, safeName, within, writeAtomic, removeFile } from '../lib/storage.js';
+import { DIRS, listJson, safeName, within, writeAtomic, removeFile } from '../lib/storage.js';
 
 const router = express.Router();
 const text = express.text({ type: () => true, limit: '64mb' });
@@ -31,6 +31,31 @@ function stamp() {
     const p = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}h${p(d.getMinutes())}m${p(d.getSeconds())}s`;
 }
+
+// Most recently touched chats across every character (for the "Recent stories" sidebar).
+router.get('/', async (req, res) => {
+    const limit = Math.min(50, Number(req.query.limit) || 12);
+    const characters = new Map((await listJson(DIRS.characters)).map(({ data }) => [data.id, data]));
+    const all = [];
+    for (const [charId, c] of characters) {
+        let names = [];
+        try { names = (await fsp.readdir(dirFor(charId))).filter(n => n.endsWith('.jsonl')); } catch { continue; }
+        for (const name of names) {
+            const stat = await fsp.stat(within(dirFor(charId), name));
+            all.push({ charId, chatId: name.slice(0, -6), updated: stat.mtimeMs, charName: c.card?.data?.name || '', avatar: c.avatar || null });
+        }
+    }
+    all.sort((a, b) => b.updated - a.updated);
+    const top = all.slice(0, limit);
+    for (const item of top) {
+        try {
+            const { messages } = parseJsonl(await fsp.readFile(fileFor(item.charId, item.chatId), 'utf8'));
+            item.count = messages.length;
+            item.preview = String(messages.at(-1)?.mes ?? '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 90);
+        } catch { item.preview = ''; }
+    }
+    res.json(top);
+});
 
 router.get('/:charId', async (req, res) => {
     let names = [];
