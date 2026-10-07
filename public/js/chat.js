@@ -37,28 +37,44 @@ function messageTemplate(mes, id) {
         class: `mes${mes.is_user ? ' user_mes' : ' char_mes'}${mes.is_system ? ' hidden_mes' : ''}`,
         mesid: id, ch_name: mes.name, is_user: String(!!mes.is_user), is_system: String(!!mes.is_system),
     });
+    // Same structure and class names as SillyTavern's #message_template, so ST themes and
+    // extensions (e.g. ones adding buttons to .extraMesButtons) find what they expect.
     node.innerHTML = `
-        <div class="mesAvatarWrapper"><div class="avatar"><img alt="" loading="lazy"></div></div>
+        <div class="mesAvatarWrapper">
+            <div class="avatar"><img alt="" loading="lazy"></div>
+            <div class="mesIDDisplay"></div><div class="mes_timer"></div><div class="tokenCounterDisplay"></div>
+        </div>
+        <div class="swipe_left fa-solid fa-chevron-left" title="Previous swipe" role="button" tabindex="0"></div>
         <div class="mes_block">
-            <div class="ch_name">
-                <span class="name_text"></span>
-                <small class="timestamp"></small>
-                <span class="mes_hidden_badge" title="Hidden from the AI"><i class="fa-solid fa-eye-slash"></i></span>
+            <div class="ch_name flex-container justifySpaceBetween">
+                <div class="flex-container flex1 alignitemscenter">
+                    <div class="flex-container alignItemsBaseline">
+                        <span class="name_text"></span>
+                        <i class="mes_ghost fa-solid fa-ghost" title="Hidden from the AI"></i>
+                        <small class="timestamp"></small>
+                    </div>
+                </div>
                 <div class="mes_buttons">
-                    <button class="mes_button" data-act="copy" title="Copy"><i class="fa-regular fa-copy"></i></button>
-                    <button class="mes_button" data-act="image" title="Illustrate this message"><i class="fa-solid fa-palette"></i></button>
-                    <button class="mes_button" data-act="edit" title="Edit"><i class="fa-solid fa-pen"></i></button>
-                    <button class="mes_button" data-act="more" title="More"><i class="fa-solid fa-ellipsis"></i></button>
+                    <div class="mes_button extraMesButtonsHint fa-solid fa-ellipsis" data-act="more" title="More"></div>
+                    <div class="extraMesButtons">
+                        <div class="mes_button sd_message_gen fa-solid fa-paintbrush" data-act="image" title="Illustrate this message"></div>
+                        <div class="mes_button mes_copy fa-solid fa-copy" data-act="copy" title="Copy"></div>
+                    </div>
+                    <div class="mes_button mes_edit fa-solid fa-pencil" data-act="edit" title="Edit"></div>
                 </div>
             </div>
-            <details class="mes_reasoning_details hidden"><summary><i class="fa-solid fa-brain"></i> <span class="reasoning-label">Thoughts</span></summary><div class="mes_reasoning"></div></details>
+            <details class="mes_reasoning_details hidden">
+                <summary class="mes_reasoning_summary flex-container"><i class="fa-solid fa-brain"></i> <span class="mes_reasoning_header_title reasoning-label">Thoughts</span></summary>
+                <div class="mes_reasoning"></div>
+            </details>
             <div class="mes_text"></div>
-            <div class="mes_media"></div>
-            <div class="mes_footer">
-                <button class="swipe_left" title="Previous"><i class="fa-solid fa-chevron-left"></i></button>
-                <span class="swipes-counter"></span>
-                <button class="swipe_right" title="Next / new reply"><i class="fa-solid fa-chevron-right"></i></button>
-            </div>
+            <div class="mes_media_wrapper mes_media"></div>
+            <div class="mes_file_wrapper"></div>
+            <div class="mes_bias"></div>
+        </div>
+        <div class="flex-container swipeRightBlock flexFlowColumn flexNoGap">
+            <div class="swipe_right fa-solid fa-chevron-right" title="Next swipe / new reply" role="button" tabindex="0"></div>
+            <div class="swipes-counter"></div>
         </div>`;
     return node;
 }
@@ -103,9 +119,8 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
 
     const swipes = mes.swipes?.length || 1;
     const isLast = id === state.chat.length - 1;
-    const footer = node.querySelector('.mes_footer');
     const canSwipe = isLast && !mes.is_user && (swipes > 1 || id > 0 || state.chat.length > 0);
-    footer.classList.toggle('visible', canSwipe || swipes > 1);
+    node.classList.toggle('swipes-visible', canSwipe || swipes > 1);
     node.querySelector('.swipes-counter').textContent = swipes > 1 ? `${(mes.swipe_id ?? 0) + 1} / ${swipes}` : '';
     node.querySelector('.swipe_right').classList.toggle('hidden', !canSwipe);
     node.querySelector('.swipe_left').classList.toggle('hidden', !(canSwipe && (mes.swipe_id ?? 0) > 0) && !(swipes > 1 && isLast));

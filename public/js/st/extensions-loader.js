@@ -9,7 +9,7 @@ export const loaded = new Map(); // name -> { manifest, error?, skipped? }
 // Extensions that restyle SillyTavern's own interface wholesale. Reverie shares ST's element ids,
 // so their CSS rearranges Reverie's layout; they are skipped unless the user opts in.
 export const UI_RESKINS = {
-    'SillyTavern-MoonlitEchoesTheme': 'Moonlit Echoes is a complete reskin of SillyTavern\'s own interface. Loaded here, it rearranges Reverie\'s layout.',
+    'SillyTavern-MoonlitEchoesTheme': 'Moonlit Echoes reskins SillyTavern\'s own interface, so it needs the SillyTavern classic layout.',
 };
 const reskinReason = ext => UI_RESKINS[ext.name] || null;
 const interceptors = [];
@@ -35,7 +35,8 @@ export async function loadExtensions() {
     for (const ext of list) {
         if (disabled.has(ext.name)) continue;
         const reason = reskinReason(ext);
-        if (reason && !forced.has(ext.name)) {
+        // Interface reskins load automatically in the classic (SillyTavern-shaped) layout.
+        if (reason && state.settings.appearance.layout !== 'classic' && !forced.has(ext.name)) {
             loaded.set(ext.name, { manifest: ext.manifest, skipped: reason });
             continue;
         }

@@ -110,7 +110,13 @@ export async function render(body) {
                     rerender();
                 } }, icon('floppy-disk'), 'Save as new theme'))),
         section('Layout',
-            field('Message style', select([['cards', 'Cards'], ['bubbles', 'Bubbles'], ['flat', 'Flat'], ['document', 'Document (novel)']], a.chatStyle, v => { a.chatStyle = v; save(); })),
+            field('Interface layout', select([['reverie', 'Reverie (sidebar, cards, character sheet)'], ['classic', 'SillyTavern classic (for ST interface themes)']], a.layout || 'reverie', v => {
+                a.layout = v;
+                save();
+                toast(v === 'classic' ? 'Classic layout on. Reload to load interface themes like Moonlit Echoes.' : 'Reverie layout on.', 'info', { timeout: 4000 });
+                rerender();
+            }), 'Classic mirrors SillyTavern\'s geometry — top bar, centred chat column, side panels — so themes such as Moonlit Echoes fit.'),
+            a.layout === 'classic' ? null : field('Message style', select([['cards', 'Cards'], ['bubbles', 'Bubbles'], ['flat', 'Flat'], ['document', 'Document (novel)']], a.chatStyle, v => { a.chatStyle = v; save(); })),
             el('div', { class: 'grid-2' },
                 field('Story font', select([['Lora', 'Lora (serif)'], ['Cormorant', 'Cormorant (elegant)'], ['Inter', 'Inter (sans)'], ['System', 'System'], ['Mono', 'Monospace']], a.chatFont, v => { a.chatFont = v; save(); })),
                 field('Interface font', select([['Inter', 'Inter'], ['System', 'System'], ['Lora', 'Lora'], ['Mono', 'Monospace']], a.uiFont, v => { a.uiFont = v; save(); }))),

@@ -255,7 +255,10 @@ export function applyTheme() {
 
     const cls = document.body.classList;
     for (const c of [...cls]) if (c.startsWith('chat-style-') || c.startsWith('avatar-style-')) cls.remove(c);
-    cls.add(`chat-style-${a.chatStyle || t.chat_display || 'cards'}`);
+    const classic = a.layout === 'classic';
+    cls.toggle('layout-classic', classic);
+    // In the classic layout, message styling is left to SillyTavern-style themes.
+    if (!classic) cls.add(`chat-style-${a.chatStyle || t.chat_display || 'cards'}`);
     cls.add(`avatar-style-${typeof t.avatar_style === 'number' && !a.avatarStyle ? AVATAR[t.avatar_style] : (a.avatarStyle || 'round')}`);
     cls.toggle('aurora-off', !a.aurora);
     cls.toggle('no-shadows', !t.shadow_width);

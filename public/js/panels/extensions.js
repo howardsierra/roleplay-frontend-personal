@@ -44,10 +44,16 @@ export async function render(body) {
                 el('div', { class: 'hint' }, m.author ? `by ${m.author}` : '', status?.error ? ` · ⚠ ${status.error}` : status?.skipped ? ' · not loaded' : status ? ' · loaded' : disabled.has(ext.name) ? ' · disabled' : ' · reload to load'),
                 status?.skipped ? el('div', { class: 'hint warn' }, status.skipped, ' ',
                     el('button', { class: 'link-btn', onclick: () => {
+                        state.settings.appearance.layout = 'classic';
+                        saveSettingsDebounced();
+                        toast('Switched to the classic layout. Reloading…', 'success');
+                        setTimeout(() => location.reload(), 900);
+                    } }, 'Switch to classic layout'), ' · ',
+                    el('button', { class: 'link-btn', onclick: () => {
                         state.settings.extensions.forceLoad = [...new Set([...(state.settings.extensions.forceLoad || []), ext.name])];
                         saveSettingsDebounced();
                         toast('Reload to load it anyway', 'info');
-                    } }, 'Load anyway')) : null),
+                    } }, 'Load anyway in Reverie layout')) : null),
             el('div', { class: 'row gap' },
                 el('button', { class: 'icon-btn', title: 'Update', onclick: async () => {
                     try { await api.post(`extensions/${encodeURIComponent(ext.name)}/update`); toast('Updated. Reload to apply.', 'success'); } catch (err) { toast(err.message, 'error'); }

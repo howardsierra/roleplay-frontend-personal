@@ -11,7 +11,7 @@ import { el, icon, toast, modal, confirmDialog, promptDialog, field, textInput, 
 
 const $id = id => document.getElementById(id);
 const avatarUrl = file => (file ? `files/avatars/${encodeURIComponent(file)}` : 'icons/icon.svg');
-const wide = query => window.matchMedia(query).matches;
+const wide = query => window.matchMedia(query).matches && !document.body.classList.contains('layout-classic');
 const SHEET_DOCK = '(min-width: 1400px)';
 
 function timeAgo(ms) {

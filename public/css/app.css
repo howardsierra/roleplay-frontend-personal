@@ -257,8 +257,12 @@ body.avatar-style-hidden .mesAvatarWrapper { display: none; }
 .name_text { font-weight: 600; font-family: var(--rv-ui-font); font-size: .95em; color: color-mix(in srgb, var(--rv-accent) 75%, var(--SmartThemeBodyColor)); }
 .user_mes .name_text { color: color-mix(in srgb, var(--rv-accent-2) 60%, var(--SmartThemeBodyColor)); }
 .timestamp { font-size: .72em; color: var(--rv-text-faint); }
-.mes_hidden_badge { display: none; font-size: .75em; color: var(--rv-text-faint); }
-.hidden_mes .mes_hidden_badge { display: inline; }
+.mes_ghost { display: none; font-size: .75em; color: var(--rv-text-faint); }
+.hidden_mes .mes_ghost { display: inline; }
+.mesIDDisplay, .mes_timer, .tokenCounterDisplay, .mes_bias:empty, .mes_file_wrapper:empty { display: none; }
+.extraMesButtons { display: contents; }
+.ch_name > .flex-container { min-width: 0; }
+.ch_name .alignItemsBaseline { align-items: baseline; gap: 8px; }
 .hidden_mes .mes_text { opacity: .55; }
 
 .mes_buttons { margin-left: auto; display: flex; gap: 2px; opacity: 0; transform: translateY(2px); transition: opacity .2s, transform .2s; }
@@ -324,9 +328,14 @@ body.avatar-style-hidden .mesAvatarWrapper { display: none; }
 @keyframes shimmer { to { background-position-x: -200%; } }
 
 /* swipes */
-.mes_footer { display: none; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 6px; color: var(--rv-text-faint); font-size: .8em; font-family: var(--rv-ui-font); }
-.mes_footer.visible { display: flex; }
-.swipe_left, .swipe_right { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; transition: background .2s, color .2s; }
+/* Swipe controls (SillyTavern markup: .swipe_left + .swipeRightBlock > .swipe_right + .swipes-counter) */
+.mes { position: relative; }
+.mes .swipe_left, .mes .swipeRightBlock { display: none; }
+.mes.swipes-visible .swipeRightBlock { display: flex; position: absolute; right: 10px; bottom: 8px; flex-direction: row-reverse; align-items: center; gap: 4px; z-index: 1; }
+.mes.swipes-visible .swipe_left { display: grid; position: absolute; right: 88px; bottom: 8px; z-index: 1; }
+.mes.swipes-visible .mes_block { padding-bottom: 40px; }
+.swipes-counter { color: var(--rv-text-faint); font-size: .8em; font-family: var(--rv-ui-font); }
+.swipe_left, .swipe_right { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; transition: background .2s, color .2s; cursor: pointer; color: var(--rv-text-faint); font-size: .85em; }
 .swipe_left:hover, .swipe_right:hover { background: var(--rv-hover); color: var(--rv-accent); }
 .swipes-counter { min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; }
 
@@ -1046,3 +1055,63 @@ body.chat-style-document .mes + .mes { border-top: 1px solid color-mix(in srgb, 
 }
 .mes_text input[type="range"], .mes_text input[type="checkbox"], .mes_text input[type="radio"] { accent-color: var(--rv-accent); }
 .mes_text pre { position: relative; }
+
+/* =====================================================================
+   Layouts. "Reverie" is the default; "classic" mirrors SillyTavern's
+   geometry so ST interface themes (e.g. Moonlit Echoes) fit.
+   ===================================================================== */
+#top-settings-holder { display: contents; }
+
+body.layout-classic {
+    --rv-topbar: var(--topBarBlockSize, 38px);
+}
+body.layout-classic #app { margin: 0 !important; padding-top: 0; height: 100dvh; }
+body.layout-classic #top-bar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 3000; height: var(--rv-topbar); padding: 0 8px;
+    background: var(--SmartThemeBlurTintColor); border-bottom: 1px solid var(--SmartThemeBorderColor);
+    backdrop-filter: blur(var(--SmartThemeBlurStrength)); -webkit-backdrop-filter: blur(var(--SmartThemeBlurStrength));
+    box-shadow: 0 2px 20px var(--SmartThemeShadowColor);
+}
+body.layout-classic #top-settings-holder { display: flex; align-items: center; justify-content: center; gap: 6px; height: 100%; width: var(--sheldWidth); max-width: 100%; margin: 0 auto; }
+body.layout-classic #top-settings-holder .icon-btn { width: var(--topBarIconSize, 30px); height: var(--topBarIconSize, 30px); border-radius: 8px; }
+body.layout-classic .top-actions { display: contents; }
+body.layout-classic .chat-title { flex: 0 1 auto; padding: 2px 10px 2px 2px; margin: 0 8px; }
+body.layout-classic .chat-title img { width: calc(var(--rv-topbar) - 8px); height: calc(var(--rv-topbar) - 8px); box-shadow: none; }
+body.layout-classic #chat-title-sub { display: none; }
+body.layout-classic #btn-library { display: inline-grid !important; }
+
+body.layout-classic #sheld {
+    position: fixed; top: var(--rv-topbar); bottom: 0; left: calc((100dvw - var(--sheldWidth)) / 2);
+    width: var(--sheldWidth); max-width: 100dvw; margin: 0;
+}
+/* Side panels fill the space beside the chat column, like SillyTavern's drawers. */
+body.layout-classic .drawer { top: var(--rv-topbar); bottom: 0; border-radius: 0; width: max(320px, calc((100dvw - var(--sheldWidth)) / 2)); padding-top: 0; }
+body.layout-classic #left-nav-panel { border-width: 0 1px 0 0; }
+body.layout-classic #right-nav-panel, body.layout-classic #sheet-panel { border-width: 0 0 0 1px; }
+body.layout-classic #left-nav-panel .drawer-close { display: inline-grid; }
+@media (min-width: 1180px) {
+    body.layout-classic #left-nav-panel:not(.open) { transform: translateX(-104%); visibility: hidden; }
+}
+@media (min-width: 1400px) {
+    body.layout-classic.sheet-docked #app { margin-right: 0 !important; }
+    body.layout-classic.sheet-docked #sheet-panel { width: calc((100dvw - var(--sheldWidth)) / 2); }
+}
+@media (max-width: 1000px) {
+    body.layout-classic { --sheldWidth: 100dvw !important; }
+    body.layout-classic .drawer { width: 100dvw; }
+}
+body.layout-classic #chat { mask-image: none; padding: 6px 0 16px; gap: 0; }
+body.layout-classic #bg_aurora { display: none; }
+
+/* Neutral SillyTavern-like messages: the interface theme (if any) does the styling. */
+body.layout-classic .mes { padding: 10px 25px 10px 10px; gap: 10px; border-bottom: 1px solid var(--SmartThemeBorderColor); animation: none; }
+body.layout-classic .mes .avatar img { width: var(--avatar-base-width, 50px); height: var(--avatar-base-height, 50px); border-radius: var(--avatar-base-border-radius-round, 50%); }
+body.layout-classic .mes_text { font-family: var(--mainFontFamily, var(--rv-chat-font)); font-size: var(--mainFontSize); }
+body.layout-classic .name_text { color: var(--SmartThemeBodyColor); }
+body.layout-classic .mes.swipes-visible .mes_block { padding-bottom: 32px; }
+body.layout-classic .send-form { border-radius: 12px; }
+/* Like SillyTavern, closed panels aren't rendered in the classic layout (themes may make them
+   position:absolute, and an off-screen panel would otherwise widen the page on phones). */
+body.layout-classic .drawer { position: fixed !important; }
+body.layout-classic .drawer:not(.open) { display: none !important; }
+body.layout-classic.sheet-docked #sheet-panel:not(.open) { display: none !important; }
