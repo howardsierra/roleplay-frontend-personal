@@ -1,6 +1,6 @@
 // The `rv` object handed to a Reverie extension's activate(rv). Stable, versioned, and
 // permission-checked: calls that need a permission the manifest didn't declare throw.
-import { state, saveSettingsDebounced, saveChat, currentPersona, charName, userName } from '../state.js';
+import { state, saveSettingsDebounced, saveChat, currentPersona, charName, userName, connectionRequest } from '../state.js';
 import { eventSource, event_types } from '../events.js';
 import { completion, streamCompletion, api as http } from '../api.js';
 import { samplerParams, setExtensionPrompt, extensionPrompts } from '../prompt.js';
@@ -135,7 +135,7 @@ export function createApi(ext, disposers) {
                 { role: 'user', content: substituteParams(String(prompt ?? '')) },
             ];
             const c = state.settings.connection;
-            const body = { provider: c.provider, model: c.model, baseUrl: c.baseUrl, messages: msgs, params: { ...samplerParams(), ...(maxTokens ? { max_tokens: maxTokens } : {}) } };
+            const body = { ...connectionRequest(c), messages: msgs, params: { ...samplerParams(), ...(maxTokens ? { max_tokens: maxTokens } : {}) } };
             if (onToken) {
                 let text = '';
                 await streamCompletion(body, { signal, onText: t => { text += t; onToken(t, text); } });

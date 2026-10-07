@@ -21,6 +21,17 @@ export async function getSecret(name) {
     return secrets[name] || (ENV_KEYS[name] && process.env[ENV_KEYS[name]]) || '';
 }
 
+/**
+ * Key for a chat request. Saved custom endpoints each have their own key (custom_<id>);
+ * the single "custom" key is the fallback, so keys saved before endpoints existed keep working.
+ */
+async function chatKey(provider, endpointId) {
+    if (provider === 'custom' && /^[a-z0-9]{1,32}$/i.test(String(endpointId || ''))) {
+        return (await getSecret(`custom_${endpointId}`)) || getSecret('custom');
+    }
+    return getSecret(provider);
+}
+
 const mask = v => (v ? `••••${String(v).slice(-4)}` : '');
 
 router.get('/providers', (_req, res) => {
@@ -50,15 +61,15 @@ router.put('/secrets', async (req, res) => {
 });
 
 router.post('/models', async (req, res) => {
-    const { provider, baseUrl } = req.body || {};
-    res.json(await listModels({ provider, baseUrl, key: await getSecret(provider) }));
+    const { provider, baseUrl, endpointId } = req.body || {};
+    res.json(await listModels({ provider, baseUrl, key: await chatKey(provider, endpointId) }));
 });
 
 router.post('/generate', async (req, res) => {
-    const { provider, baseUrl, model, messages, params = {}, stream = true } = req.body || {};
+    const { provider, baseUrl, endpointId, model, messages, params = {}, stream = true } = req.body || {};
     if (!model) return res.status(400).json({ error: 'Pick a model in the Connection panel first' });
     if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ error: 'Nothing to send' });
-    const key = await getSecret(provider);
+    const key = await chatKey(provider, endpointId);
     const controller = new AbortController();
     res.on('close', () => { if (!res.writableFinished) controller.abort(); });
 

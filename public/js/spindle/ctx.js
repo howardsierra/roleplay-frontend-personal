@@ -1,7 +1,7 @@
 // The `ctx` object a Lumiverse extension frontend receives in setup(ctx), built on Reverie's UI.
 // Everything an extension creates through ctx is tracked and removed when it's turned off.
 import DOMPurify from '../../vendor/purify.js';
-import { state } from '../state.js';
+import { state, connectionRequest } from '../state.js';
 import { api } from '../api.js';
 import { messageId } from '../message-ids.js';
 import { renderHooks, printMessages } from '../chat.js';
@@ -285,7 +285,7 @@ function mountModelCombobox(target, o = {}) {
     const load = async () => {
         if (o.connection?.kind === 'image') return;
         const c = state.settings.connection;
-        const models = await api.post('models', { provider: c.provider, baseUrl: c.baseUrl }).catch(() => []);
+        const models = await api.post('models', connectionRequest(c)).catch(() => []);
         list.replaceChildren(...(models || []).slice(0, 500).map(m => el('option', { value: m.id || m })));
     };
     load();

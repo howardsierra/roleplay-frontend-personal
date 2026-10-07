@@ -1,5 +1,5 @@
 // Chat view + generation flows (send, swipe/regenerate, continue, impersonate, quiet).
-import { state, saveChat, saveChatDebounced, charName, userName, currentPersona, chatMetadata } from './state.js';
+import { state, saveChat, saveChatDebounced, charName, userName, currentPersona, chatMetadata, connectionRequest } from './state.js';
 import { streamCompletion, completion } from './api.js';
 import { eventSource, event_types } from './events.js';
 import { buildPrompt, samplerParams } from './prompt.js';
@@ -460,7 +460,7 @@ export function stopGeneration() {
 
 function connectionBody() {
     const c = state.settings.connection;
-    return { provider: c.provider, model: c.model, baseUrl: c.baseUrl };
+    return connectionRequest(c);
 }
 
 async function runInterceptors(type, abortController) {

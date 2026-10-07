@@ -1,6 +1,6 @@
 // SillyTavern service APIs that extensions call directly: Connection Manager,
 // ChatCompletionService, persona helpers, and assorted utils/script.js exports.
-import { state, saveSettingsDebounced, currentPersona } from '../state.js';
+import { state, saveSettingsDebounced, currentPersona, connectionRequest } from '../state.js';
 import { eventSource, event_types } from '../events.js';
 import { streamCompletion, completion, api } from '../api.js';
 import { samplerParams } from '../prompt.js';
@@ -38,7 +38,7 @@ function streamAsGenerator(body, signal) {
 function connectionFor(profileId) {
     const p = (state.settings.connection.profiles || []).find(x => x.id === profileId);
     const c = p || state.settings.connection;
-    return { provider: c.provider, model: c.model, baseUrl: c.baseUrl || '' };
+    return connectionRequest(c);
 }
 
 function paramsFrom(payload = {}, maxTokens) {
@@ -80,7 +80,7 @@ export const ChatCompletionService = {
     async processRequest(custom, _options, extractData = true, signal = null) { return this.sendRequest(custom, extractData, signal); },
     async sendRequest(data = {}, extractData = true, signal = null) {
         const conn = state.settings.connection;
-        const body = { provider: conn.provider, model: data.model || conn.model, baseUrl: conn.baseUrl, messages: toContent(data.messages), params: paramsFrom(data, data.max_tokens) };
+        const body = { ...connectionRequest(conn), model: data.model || conn.model, messages: toContent(data.messages), params: paramsFrom(data, data.max_tokens) };
         if (data.stream) return streamAsGenerator(body, signal);
         const res = await completion(body, { signal });
         return extractData ? { content: res.text, reasoning: res.reasoning } : { choices: [{ message: { content: res.text, reasoning_content: res.reasoning } }] };
