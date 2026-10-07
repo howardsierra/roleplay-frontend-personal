@@ -1,6 +1,8 @@
 import { state, saveSettingsDebounced } from '../state.js';
 import { listPresets, selectPreset, savePresetDebounced, savePreset, createPreset, deletePreset } from '../preset-store.js';
-import { importPreset, toSillyTavern, toLumiverse, defaultPreset, makeBlock, MARKER_NAMES, STRUCTURAL_MARKERS } from '../presets.js';
+import { importPreset, toSillyTavern, toLumiverse, toReverie, defaultPreset, makeBlock, normalizeProfile, MARKER_NAMES, STRUCTURAL_MARKERS } from '../presets.js';
+import { checkCondition } from '../conditions.js';
+import { activeModelProfile } from '../prompt.js';
 import { estimateTokens } from '../prompt.js';
 import { el, icon, field, select, textInput, textArea, toggle, slider, section, toast, modal, confirmDialog, promptDialog, pickFile, download } from '../ui.js';
 import { popMenu, showPromptPreview } from '../chat.js';
@@ -22,7 +24,8 @@ export async function render(body) {
 
     const moreBtn = el('button', { class: 'icon-btn', title: 'Preset actions' }, icon('ellipsis-vertical'));
     moreBtn.addEventListener('click', () => popMenu(moreBtn, [
-        ['file-import', 'Import (SillyTavern / Lumiverse)', importFlow],
+        ['file-import', 'Import (Reverie / SillyTavern / Lumiverse)', importFlow],
+        ['file-export', 'Export as Reverie preset', () => download(`${p.name}.rvpreset.json`, toReverie(p))],
         ['file-export', 'Export as SillyTavern', () => download(`${p.name}.json`, toSillyTavern(p))],
         ['file-export', 'Export as Lumiverse (Loom)', () => download(`${p.name}.loom.json`, toLumiverse(p))],
         ['plus', 'New preset', async () => { await createPreset(defaultPreset()); rerender(); }],
@@ -195,6 +198,42 @@ export async function render(body) {
         list,
         el('p', { class: 'hint' }, 'Tip: a prompt with no text whose name looks like a divider (===== Style =====, --- NSFW ---, ## Jailbreaks) becomes a collapsible section.')));
 
+    // ----- Model profiles (Reverie presets) -----
+    const profBox = el('div', { class: 'stack' });
+    const renderProfiles = () => {
+        const active = activeModelProfile(p);
+        profBox.replaceChildren(
+            ...p.modelProfiles.map((prof, i) => {
+                const sw = el('input', { type: 'checkbox', class: 'switch-input' });
+                sw.checked = prof.enabled !== false;
+                sw.addEventListener('change', () => { prof.enabled = sw.checked; savePresetDebounced(); renderProfiles(); });
+                const summary = [...Object.entries(prof.samplers).map(([k, v]) => `${k}=${v}`), prof.assistantPrefill !== undefined ? 'prefill' : ''].filter(Boolean).join(' · ') || 'no overrides';
+                return el('div', { class: `list-row${prof === active ? ' active-profile' : ''}` },
+                    el('button', { class: 'list-row-main', onclick: () => editProfile(p, i, renderProfiles) },
+                        el('span', { class: 'list-row-title' }, prof.name, prof === active ? el('span', { class: 'badge marker' }, 'active now') : null),
+                        el('span', { class: 'hint mono ellipsis' }, `model ~ ${prof.match || '?'} — ${summary}`)),
+                    el('label', { class: 'switch small' }, sw, el('span', { class: 'switch-track' })));
+            }),
+            el('button', { class: 'btn small', onclick: () => {
+                p.modelProfiles.push(normalizeProfile({ name: 'Claude', match: 'claude', samplers: { temperature: 1 } }));
+                savePresetDebounced();
+                editProfile(p, p.modelProfiles.length - 1, renderProfiles);
+            } }, icon('plus'), 'Add model profile'));
+    };
+    renderProfiles();
+    body.append(section('Model profiles',
+        el('p', { class: 'hint' }, 'Overrides that apply automatically when the active model matches — e.g. a different temperature and prefill for Claude than for Gemini. The first matching profile wins.'),
+        profBox));
+
+    // ----- About -----
+    const meta = p.meta;
+    body.append(section('About this preset',
+        el('div', { class: 'grid-2' },
+            field('Author', textInput(meta.author, change(v => { meta.author = v; }))),
+            field('Version', textInput(meta.version, change(v => { meta.version = v; }), { placeholder: '1.0' }))),
+        field('Description', textArea(meta.description, change(v => { meta.description = v; }), { rows: 3 })),
+        field('Homepage', textInput(meta.homepage, change(v => { meta.homepage = v; }), { placeholder: 'https://…' }))));
+
     // ----- Behaviour -----
     const b = p.behavior;
     const c = p.completion;
@@ -274,6 +313,7 @@ function blockRow(p, b, index, category, refresh) {
     if (b.position === 'in_history') badges.push(el('span', { class: 'badge depth' }, `@${b.depth}`));
     if (b.role && b.role !== 'system' && !isCategory) badges.push(el('span', { class: `badge role-${b.role}` }, b.role.replace('_', ' ')));
     if (b.injectionTrigger?.length) badges.push(el('span', { class: 'badge' }, icon('bolt'), b.injectionTrigger.join(',')));
+    if (b.when?.trim()) badges.push(el('span', { class: `badge cond${checkCondition(b.when) ? ' bad' : ''}`, title: b.when }, icon('code-branch'), 'if'));
     const tokens = structural ? '' : `${estimateTokens(b.content)}t`;
     const row = el('div', { class: `block-row${isCategory ? ' category' : ''}${b.enabled ? '' : ' off'}`, 'data-index': index, style: b.color ? { '--block-color': b.color } : null },
         el('span', { class: 'drag-handle', title: 'Drag to reorder' }, icon('grip-vertical')),
@@ -332,6 +372,21 @@ async function editBlock(p, block, refresh) {
         structural
             ? el('p', { class: 'hint' }, icon('circle-info'), ` This is the “${MARKER_NAMES[draft.marker]}” marker — its text comes from the character / persona / lorebook. You can still move it, toggle it, or change its role.`)
             : field('Content', textArea(draft.content, v => { draft.content = v; }, { rows: 14, class: 'input mono' }), 'Supports {{char}}, {{user}}, {{random::a::b}}, {{getvar::x}}, {{var::name}} and other SillyTavern / Lumiverse macros.'),
+        (() => {
+            const status = el('small', { class: 'hint' });
+            const input = textInput(draft.when || '', v => {
+                draft.when = v;
+                const err = v.trim() ? checkCondition(v) : '';
+                status.textContent = err ? `⚠ ${err}` : v.trim() ? '✓ Valid condition' : 'Leave empty to always include.';
+                status.classList.toggle('warn', !!err);
+            }, { class: 'input mono', placeholder: "chat.length > 20 and char.tags has 'fantasy'" });
+            status.textContent = draft.when ? (checkCondition(draft.when) ? `⚠ ${checkCondition(draft.when)}` : '✓ Valid condition') : 'Leave empty to always include.';
+            return el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Only include when (Reverie condition)'), input, status,
+                el('details', { class: 'cond-help' }, el('summary', {}, 'What can I test?'),
+                    el('div', { class: 'hint' }, 'type (normal, continue, impersonate, swipe, quiet) · chat.length · chat.last · char.name · char.tags · user.name · model · provider · profile · var.NAME (chat or preset variable) · global.NAME',
+                        el('br'), "Operators: == != > < >= <= · ~ (contains, or /regex/) · has · and / or / not · ( )",
+                        el('br'), "Examples: model ~ 'claude' · type != 'impersonate' · var.tone == 'dark' · not var.nsfw")));
+        })(),
         el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Only for generation types (none = all)'),
             el('div', { class: 'chip-row' }, triggers.map(t => {
                 const chip = el('button', { class: `chip toggle-chip${draft.injectionTrigger.includes(t) ? ' active' : ''}`, onclick: () => {
@@ -358,6 +413,45 @@ async function editBlock(p, block, refresh) {
     } else return;
     refresh();
     savePresetDebounced();
+}
+
+async function editProfile(p, index, refresh) {
+    const prof = structuredClone(p.modelProfiles[index]);
+    const keys = [['temperature', 'Temperature'], ['top_p', 'Top P'], ['top_k', 'Top K'], ['min_p', 'Min P'], ['frequency_penalty', 'Frequency penalty'], ['presence_penalty', 'Presence penalty'], ['max_tokens', 'Max response'], ['context_size', 'Context size']];
+    const numberField = (key, label) => {
+        const input = el('input', { class: 'input', type: 'number', step: 'any', placeholder: 'preset value' });
+        input.value = prof.samplers[key] ?? '';
+        input.addEventListener('input', () => {
+            if (input.value === '') delete prof.samplers[key];
+            else prof.samplers[key] = Number(input.value);
+        });
+        return field(label, input);
+    };
+    let usePrefill = prof.assistantPrefill !== undefined;
+    const prefill = textArea(prof.assistantPrefill ?? '', v => { prof.assistantPrefill = v; }, { rows: 2 });
+    const result = await modal({
+        title: 'Model profile',
+        content: el('div', { class: 'stack' },
+            el('div', { class: 'grid-2' },
+                field('Name', textInput(prof.name, v => { prof.name = v; })),
+                field('Model matches', textInput(prof.match, v => { prof.match = v; }, { class: 'input mono', placeholder: 'claude  or  /gemini-2\\.5/' }))),
+            el('p', { class: 'hint' }, 'Leave a value empty to keep the preset\'s.'),
+            el('div', { class: 'grid-2' }, keys.map(([k, l]) => numberField(k, l))),
+            field('Reasoning effort', select([['', 'Preset value'], ['minimal', 'Minimal'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], prof.samplers.reasoning_effort || '', v => {
+                if (v) prof.samplers.reasoning_effort = v; else delete prof.samplers.reasoning_effort;
+            })),
+            toggle('Override assistant prefill', usePrefill, v => { usePrefill = v; prefill.disabled = !v; }),
+            prefill),
+        buttons: [{ label: 'Delete', value: 'delete', danger: true }, { label: 'Cancel', value: null }, { label: 'Save', value: 'save', primary: true }],
+    });
+    if (result === 'delete') p.modelProfiles.splice(index, 1);
+    else if (result === 'save') {
+        if (!usePrefill) delete prof.assistantPrefill;
+        else prof.assistantPrefill ??= '';
+        p.modelProfiles[index] = prof;
+    } else return;
+    savePresetDebounced();
+    refresh();
 }
 
 async function presetNavigator(presets, refresh) {

@@ -111,8 +111,16 @@ If an extension imports a name Reverie doesn't provide, it gets a harmless no-op
 | ✅ Loads, UI appears (not exercised in depth) | Saucepan Seasoning, CSS Snippets, Custom Theme Style Inputs, Chat Top Bar (TopInfoBar), Inline Image Generation (needs its own image API settings) |
 | ✅ Built in instead | Preset Organizer & Prompt Checkboxes (sections, search, bulk toggles, checkboxes and the preset navigator are part of Reverie's prompt manager), Sampler Commands (`/sampler-get` and `/sampler-set` are native), Backup Manager (Settings → More → Backup), Background Manager (per-chat backgrounds are native) |
 | ⚪ Nothing to attach to | Persona Manager, Avatar Banner: they restyle SillyTavern's own persona and character panels, which Reverie replaces with its own. They load without errors. |
-| ⚠️ Skipped by default | Moonlit Echoes Theme is a reskin of SillyTavern's whole interface and rearranges Reverie's layout. Use **Load anyway** if you want it. |
+| ✅ With the classic layout | Moonlit Echoes Theme reskins SillyTavern's whole interface. Turn on **Settings → Look → Interface layout → Classic** (or click **Switch to classic layout** on its card). Reverie then uses SillyTavern's geometry: a fixed top bar, a centred chat column and side drawers. In the Reverie layout it's skipped unless you choose **Load anyway**. |
 | ❌ Needs ST server plugin | WebSearch calls SillyTavern's search server plugin, which Reverie doesn't include. |
+
+## Reverie extensions, presets and themes
+
+Reverie also has its own formats that go beyond what SillyTavern's can do. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md) for the details.
+
+- **Extensions** (`reverie-extension.json`): turn on and off without a reload, declare permissions, get a settings form from the manifest, keep data on the server, and add sheet tabs, composer buttons, menu items, message actions, slash commands, macros and **custom renderers** that draw ```` ```lang ```` blocks from the AI as native UI. **Settings → Extensions → Create starter extension** scaffolds a working example.
+- **Presets** (`.rvpreset.json`): blocks with **conditions** (`type == 'impersonate'`, `chat.length > 40`, `char.tags has 'horror'`…), **model profiles** that switch samplers and prefill per model, and author metadata.
+- **Themes** (`.rvtheme.json`): named colour tokens with **light and dark variants**, Google Fonts, embedded image assets, corner radius, and layout preferences, all in one shareable file.
 
 ## Where things are stored
 

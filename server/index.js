@@ -9,7 +9,7 @@ import charactersRouter from './routes/characters.js';
 import chatsRouter from './routes/chats.js';
 import aiRouter from './routes/ai.js';
 import filesRouter from './routes/files.js';
-import { apiRouter as extensionsApi, serveRouter as extensionsServe } from './routes/extensions.js';
+import { apiRouter as extensionsApi, serveRouter as extensionsServe, dataRouter as extDataRouter } from './routes/extensions.js';
 import stCompatRouter, { USER_FILES } from './routes/st-compat.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -119,6 +119,7 @@ app.use('/api/worlds', collectionRouter(DIRS.worlds, { summary: w => ({ id: w.id
 app.use('/api/themes', collectionRouter(DIRS.themes));
 app.use('/api/personas', collectionRouter(DIRS.personas));
 app.use('/api/extensions', extensionsApi);
+app.use('/api/ext-data', extDataRouter);
 app.use('/api', aiRouter);
 app.use('/api', filesRouter);
 app.get('/api/info', (_req, res) => res.json({ name: 'Reverie', version: process.env.npm_package_version || '0.1.0', auth: !!PASSWORD }));

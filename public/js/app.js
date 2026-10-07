@@ -9,6 +9,7 @@ import { initSettings, openSettings } from './panels/settings.js';
 import { openImageStudio, openGallery } from './imagegen.js';
 import { installCompat, installStDom, frameRpc, executeSlashCommands, registerNativeOverrides } from './st/compat.js';
 import { loadExtensions } from './st/extensions-loader.js';
+import { loadReverieExtensions } from './rv-ext/loader.js';
 import { setFrameRpcHandler } from './render.js';
 import { initLayout } from './layout.js';
 import { el, icon, toast, modal, toggleDrawer, closeAllDrawers, openDrawer, isMobile } from './ui.js';
@@ -182,6 +183,7 @@ async function boot() {
     // Like SillyTavern: extensions load before the first chat opens, so they see CHAT_CHANGED for it.
     await loadExtensions();
     registerNativeOverrides();
+    await loadReverieExtensions();
     await eventSource.emit(event_types.APP_READY);
 
     const last = state.settings.lastCharacterId;

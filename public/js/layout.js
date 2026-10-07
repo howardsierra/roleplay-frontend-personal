@@ -7,6 +7,7 @@ import { listPresets, selectPreset, savePreset } from './preset-store.js';
 import { lastLore } from './prompt.js';
 import { generateRaw } from './chat.js';
 import { applyTheme } from './themes.js';
+import { points, onPointsChanged } from './rv-ext/points.js';
 import { el, icon, toast, modal, confirmDialog, promptDialog, field, textInput, textArea, select, openDrawer, closeDrawer, debounce } from './ui.js';
 
 const $id = id => document.getElementById(id);
@@ -292,7 +293,19 @@ async function sceneTab() {
 export async function renderSheet() {
     const body = $id('sheet-body');
     if (!body) return;
+    const extTab = points.sheetTabs.list().find(t => t.id === sheetTab);
+    if (!extTab && !['character', 'lore', 'scene'].includes(sheetTab)) sheetTab = 'character';
     document.querySelectorAll('#sheet-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === sheetTab));
+    if (extTab) {
+        const container = el('div', { class: 'rv-ext-panel' });
+        body.replaceChildren(container);
+        try {
+            await extTab.render(container, { character: state.character?.card?.data?.name ?? null, chatId: state.chatId });
+        } catch (err) {
+            container.replaceChildren(el('div', { class: 'empty error' }, `${extTab.title}: ${err.message}`));
+        }
+        return;
+    }
     const content = sheetTab === 'lore' ? loreTab() : sheetTab === 'scene' ? await sceneTab() : characterTab();
     body.replaceChildren(content);
 }
@@ -311,7 +324,35 @@ function sheetVisible(on) {
     } else closeDrawer('sheet-panel');
 }
 
+/** Built-in tabs plus tabs contributed by Reverie extensions. */
+function renderSheetTabs() {
+    const nav = $id('sheet-tabs');
+    nav.querySelectorAll('.tab.ext-tab').forEach(n => n.remove());
+    const anchor = nav.querySelector('.grow');
+    for (const t of points.sheetTabs.list()) {
+        anchor.before(el('button', { class: 'tab ext-tab', 'data-tab': t.id, title: t.title }, t.icon ? icon(t.icon) : null, el('span', {}, t.title)));
+    }
+}
+
+/** Composer buttons and wand-menu items contributed by Reverie extensions. */
+function renderExtensionUi() {
+    const left = $id('leftSendForm');
+    left.querySelectorAll('.rvext-btn').forEach(n => n.remove());
+    for (const b of points.composerButtons.list()) {
+        left.append(el('button', { class: 'icon-btn rvext-btn', title: b.title || '', onclick: () => b.onClick?.() }, icon(b.icon || 'puzzle-piece')));
+    }
+    const menu = $id('extensions-actions-menu');
+    menu.querySelectorAll('.rvext-item').forEach(n => n.remove());
+    for (const m of points.menuItems.list()) {
+        menu.append(el('button', { class: 'menu-item list-group-item rvext-item', onclick: () => m.onClick?.() }, icon(m.icon || 'puzzle-piece'), el('span', {}, m.label)));
+    }
+}
+
 function bindSheet() {
+    onPointsChanged(kind => {
+        if (kind === 'sheetTabs') { renderSheetTabs(); renderSheet(); }
+        if (kind === 'composerButtons' || kind === 'menuItems') renderExtensionUi();
+    });
     $id('btn-sheet').addEventListener('click', () => {
         const open = wide(SHEET_DOCK) ? !document.body.classList.contains('sheet-docked') : !$id('sheet-panel').classList.contains('open');
         sheetVisible(open);

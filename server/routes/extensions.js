@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
-import { DIRS, readJson, removeFile, safeName, within } from '../lib/storage.js';
+import { DATA_DIR, DIRS, readJson, removeFile, safeName, within, writeJson } from '../lib/storage.js';
 import { buildShimModule, rewriteImports } from '../lib/esm-shim.js';
 
 const run = promisify(execFile);
@@ -53,8 +53,11 @@ async function download(info, target, branch) {
 
 async function describe(name) {
     const dir = within(DIRS.extensions, name);
-    const manifest = await readJson(path.join(dir, 'manifest.json'));
+    // Reverie-native extensions ship reverie-extension.json; SillyTavern ones ship manifest.json.
+    const native = await readJson(path.join(dir, 'reverie-extension.json'));
+    const manifest = native || await readJson(path.join(dir, 'manifest.json'));
     if (!manifest) return null;
+    const type = native ? 'reverie' : 'sillytavern';
     let source = await readJson(path.join(dir, '.reverie-source.json'));
     if (!source && fs.existsSync(path.join(dir, '.git'))) {
         try {
@@ -62,7 +65,7 @@ async function describe(name) {
             source = { url: stdout.trim() };
         } catch { /* ignore */ }
     }
-    return { name, manifest, source };
+    return { name, type, manifest, source };
 }
 
 apiRouter.get('/', async (_req, res) => {
@@ -85,8 +88,8 @@ apiRouter.post('/install', async (req, res) => {
     if (fs.existsSync(target)) return res.status(409).json({ error: `"${name}" is already installed` });
     try {
         await download(info, target, branch);
-        if (!fs.existsSync(path.join(target, 'manifest.json'))) {
-            throw Object.assign(new Error('That repository has no manifest.json, so it is not a SillyTavern extension'), { status: 400 });
+        if (!fs.existsSync(path.join(target, 'manifest.json')) && !fs.existsSync(path.join(target, 'reverie-extension.json'))) {
+            throw Object.assign(new Error('That repository has no manifest.json or reverie-extension.json, so it is not an extension'), { status: 400 });
         }
     } catch (err) {
         await removeFile(target);
@@ -134,7 +137,69 @@ serveRouter.get(/^\/scripts\/extensions\/third-party\/([^/]+)\/(.+)$/, async (re
     res.sendFile(file);
 });
 
+// Reverie-native extensions are served as-is (they use the rv API, not ST imports).
+serveRouter.get(/^\/rv-extensions\/([^/]+)\/(.+)$/, async (req, res, next) => {
+    const base = within(DIRS.extensions, safeName(decodeURIComponent(req.params[0])));
+    const rel = decodeURIComponent(req.params[1]).replace(/^\/+/, '');
+    const file = path.resolve(base, rel);
+    if (!file.startsWith(base + path.sep) || rel.split('/').includes('.git')) return res.status(403).end();
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return next();
+    res.set('Cache-Control', 'no-cache');
+    if (/\.m?js$/.test(file)) res.type('application/javascript');
+    res.sendFile(file);
+});
+
 serveRouter.get(/^\/st-shim(\/.+)$/, (req, res) => {
     res.type('application/javascript').set('Cache-Control', 'no-cache');
     res.send(buildShimModule(req.params[0], req.query.n));
+});
+
+// ---------------------------------------------------------------------------
+// Per-extension storage for Reverie extensions (data/ext-data/<id>.json), synced across devices.
+// ---------------------------------------------------------------------------
+export const dataRouter = express.Router();
+const TEMPLATE_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../templates/starter-extension');
+const EXT_DATA = path.join(DATA_DIR, 'ext-data');
+
+dataRouter.get('/:id', async (req, res) => {
+    res.json(await readJson(within(EXT_DATA, `${safeName(req.params.id)}.json`), {}));
+});
+
+dataRouter.put('/:id', async (req, res) => {
+    const file = within(EXT_DATA, `${safeName(req.params.id)}.json`);
+    const data = await readJson(file, {});
+    for (const [k, v] of Object.entries(req.body || {})) {
+        if (v === null) delete data[k];
+        else data[k] = v;
+    }
+    const size = Buffer.byteLength(JSON.stringify(data));
+    if (size > 5 * 1024 * 1024) return res.status(413).json({ error: 'Extension storage is limited to 5 MB' });
+    await writeJson(file, data);
+    res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Scaffold a starter Reverie extension the user can edit.
+// ---------------------------------------------------------------------------
+apiRouter.post('/create', async (req, res) => {
+    const display = String(req.body?.name || 'My Extension').slice(0, 60);
+    const id = safeName(display.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'my-extension');
+    const dir = within(DIRS.extensions, id);
+    if (fs.existsSync(dir)) return res.status(409).json({ error: `"${id}" already exists` });
+    await fsp.mkdir(dir, { recursive: true });
+    const manifest = {
+        id, name: display, version: '0.1.0', author: '', description: 'A Reverie extension.',
+        apiVersion: 1, main: 'index.js', styles: ['style.css'],
+        permissions: ['prompt', 'storage'],
+        settings: [
+            { key: 'enabled', type: 'toggle', label: 'Add the scene reminder to the prompt', default: true },
+            { key: 'reminder', type: 'textarea', label: 'Reminder text', default: 'Keep {{char}} in character and the scene vivid.' },
+        ],
+    };
+    await fsp.writeFile(path.join(dir, 'reverie-extension.json'), JSON.stringify(manifest, null, 2));
+    for (const file of ['index.js', 'style.css']) {
+        const text = await fsp.readFile(path.join(TEMPLATE_DIR, file), 'utf8');
+        await fsp.writeFile(path.join(dir, file), text.replaceAll('__ID__', id));
+    }
+    res.json(await describe(id));
 });

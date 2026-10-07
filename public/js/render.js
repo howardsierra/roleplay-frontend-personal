@@ -5,6 +5,7 @@ import DOMPurify from '../vendor/purify.js';
 import { state } from './state.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { escapeHtml } from './ui.js';
+import { rendererFor } from './rv-ext/points.js';
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -35,6 +36,11 @@ export function formatMessage(text, { isUser = false, depth, streaming = false, 
     if (render.html) {
         src = src.replace(FENCE, (match, lead, _fence, langRaw, code) => {
             const lang = String(langRaw || '').trim().toLowerCase();
+            // Reverie extensions can render their own fenced blocks natively.
+            if (lang && rendererFor(lang)) {
+                widgets.push({ kind: 'ext', lang, code });
+                return `${lead}\n<rv-widget data-i="${widgets.length - 1}"></rv-widget>\n`;
+            }
             if (/^(python|py|python3|pyodide)$/.test(lang) && render.python !== 'off') {
                 widgets.push({ kind: 'python', code });
                 return `${lead}\n<rv-widget data-i="${widgets.length - 1}"></rv-widget>\n`;
@@ -100,12 +106,30 @@ export function hydrate(container, result, { streaming = false, onPic, message }
             node.replaceWith(buildingPlaceholder(widget.kind));
             continue;
         }
+        if (widget.kind === 'ext') {
+            node.replaceWith(extensionBlock(widget, message));
+            continue;
+        }
         node.replaceWith(widget.kind === 'python' ? pythonWidget(widget.code) : htmlWidget(widget.code, { whole: widget.whole }));
     }
     for (const node of container.querySelectorAll('rv-pic')) {
         const prompt = result.pics[Number(node.dataset.i)] || '';
         node.replaceWith(picWidget(prompt, message, { streaming, onPic }));
     }
+}
+
+function extensionBlock(widget, message) {
+    const div = document.createElement('div');
+    div.className = `rv-ext-block rv-ext-${widget.lang.replace(/[^\w-]/g, '')}`;
+    const renderer = rendererFor(widget.lang);
+    try {
+        renderer.render(widget.code, div, { message: message ? { name: message.name, text: message.mes, isUser: !!message.is_user } : null });
+    } catch (err) {
+        div.classList.add('error');
+        div.textContent = `${widget.lang}: ${err.message}`;
+        console.error(`Renderer for ${widget.lang} failed`, err);
+    }
+    return div;
 }
 
 function buildingPlaceholder(kind) {

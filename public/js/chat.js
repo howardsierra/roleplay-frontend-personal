@@ -7,6 +7,7 @@ import { substituteParams } from './macros.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { formatMessage, hydrate } from './render.js';
 import { el, icon, toast, confirmDialog, modal, escapeHtml, isMobile } from './ui.js';
+import { points, plainMessage, onPointsChanged } from './rv-ext/points.js';
 
 const chatEl = () => document.getElementById('chat');
 const textarea = () => document.getElementById('send_textarea');
@@ -115,6 +116,16 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
         media.append(el('figure', { class: 'mes_img_container' },
             el('img', { class: 'mes_img rv-zoomable', src: url, alt: m.title || '', loading: 'lazy' }),
             m.title ? el('figcaption', {}, m.title) : null));
+    }
+
+    // Message actions contributed by Reverie extensions.
+    const extra = node.querySelector('.extraMesButtons');
+    extra.querySelectorAll('.rvext-action').forEach(n => n.remove());
+    for (const action of points.messageActions.list()) {
+        try {
+            if (action.when && !action.when(plainMessage(mes, id), id)) continue;
+        } catch { continue; }
+        extra.append(el('div', { class: `mes_button rvext-action fa-solid fa-${action.icon || 'puzzle-piece'}`, title: action.title || '', 'data-rvext-action': action.id }));
     }
 
     const swipes = mes.swipes?.length || 1;
@@ -341,6 +352,7 @@ export async function showPromptPreview() {
 
 export function bindChatEvents() {
     const root = chatEl();
+    onPointsChanged(kind => { if (kind === 'messageActions' || kind === 'renderers') printMessages(); });
     root.addEventListener('scroll', () => {
         stickToBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 80;
     }, { passive: true });
@@ -349,6 +361,12 @@ export function bindChatEvents() {
         const mesNode = e.target.closest('.mes');
         if (!mesNode) return;
         const id = Number(mesNode.getAttribute('mesid'));
+        const extAction = e.target.closest('[data-rvext-action]');
+        if (extAction) {
+            const action = points.messageActions.list().find(a => a.id === extAction.dataset.rvextAction);
+            try { await action?.onClick?.(plainMessage(state.chat[id], id), id); } catch (err) { toast(err.message, 'error'); }
+            return;
+        }
         const btn = e.target.closest('[data-act], .swipe_left, .swipe_right');
         if (e.target.closest('.rv-zoomable')) return zoomImage(e.target.closest('.rv-zoomable').src);
         if (!btn) {

@@ -137,6 +137,10 @@ export const SlashCommandParser = {
             this.commands[alias] = cmd;
         }
     },
+    removeCommand(name) {
+        commands.delete(String(name).toLowerCase());
+        delete this.commands[name];
+    },
     addCommand(name, callback, aliases = [], helpString = '') {
         this.addCommandObject(SlashCommand.fromProps({ name, callback, aliases, helpString }));
     },
