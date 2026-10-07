@@ -8,6 +8,7 @@ import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { formatMessage, hydrate } from './render.js';
 import { el, icon, toast, confirmDialog, modal, escapeHtml, isMobile } from './ui.js';
 import { points, plainMessage, onPointsChanged } from './rv-ext/points.js';
+import { paintMessage } from './dialogue-colors.js';
 
 const chatEl = () => document.getElementById('chat');
 const textarea = () => document.getElementById('send_textarea');
@@ -127,6 +128,8 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
         } catch { continue; }
         extra.append(el('div', { class: `mes_button rvext-action fa-solid fa-${action.icon || 'puzzle-piece'}`, title: action.title || '', 'data-rvext-action': action.id }));
     }
+
+    paintMessage(node, mes);
 
     const swipes = mes.swipes?.length || 1;
     const isLast = id === state.chat.length - 1;

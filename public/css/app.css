@@ -1140,3 +1140,18 @@ body.layout-classic.sheet-docked #sheet-panel:not(.open) { display: none !import
 .ext-settings > summary { cursor: pointer; color: var(--rv-text-dim, inherit); font-size: 0.9em; }
 .ext-settings > .stack { margin-top: 8px; }
 .toggle-row { align-items: center; }
+
+/* ---------- Dialogue colors ---------- */
+body.rv-dc .mes .mes_text q { color: var(--character-color, var(--SmartThemeQuoteColor)); }
+body.rv-dc-names .mes .name_text { color: var(--character-color, inherit); }
+.mes_text font[color] q, .mes_text font[color] em, .mes_text font[color] i,
+body.rv-dc .mes .mes_text font[color] q { color: inherit; }
+.mes_text font.rv-speaker[data-speaker] { cursor: help; }
+.mes_text font.rv-speaker em, .mes_text font.rv-speaker i { opacity: .88; }
+.cast-editor { gap: 8px; }
+.cast-row { display: flex; align-items: center; gap: 10px; }
+.cast-row .cast-name { font-weight: 600; flex: 1; }
+.cast-row .cast-name-input { flex: 1; min-width: 0; }
+input.cast-color { width: 34px; height: 34px; padding: 0; border: 1px solid var(--rv-border, #444); border-radius: 50%; background: none; cursor: pointer; overflow: hidden; flex: none; }
+input.cast-color::-webkit-color-swatch-wrapper { padding: 0; }
+input.cast-color::-webkit-color-swatch { border: 0; border-radius: 50%; }

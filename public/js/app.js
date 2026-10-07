@@ -10,6 +10,7 @@ import { openImageStudio, openGallery } from './imagegen.js';
 import { installCompat, installStDom, frameRpc, executeSlashCommands, registerNativeOverrides } from './st/compat.js';
 import { loadExtensions } from './st/extensions-loader.js';
 import { loadReverieExtensions } from './rv-ext/loader.js';
+import { initDialogueColors, openCastEditor } from './dialogue-colors.js';
 import { setFrameRpcHandler } from './render.js';
 import { initLayout } from './layout.js';
 import { el, icon, toast, modal, toggleDrawer, closeAllDrawers, openDrawer, isMobile } from './ui.js';
@@ -28,6 +29,7 @@ function coreActions() {
         ['square-plus', 'New chat', newChat],
         ['scroll', 'Prompt preview', showPromptPreview],
         ['note-sticky', "Author's note", () => openSettings('advanced')],
+        ['palette', 'Cast colors', openCastEditor],
     ];
     menu.replaceChildren(...items.map(([ic, label, fn]) => el('button', { class: 'menu-item list-group-item', onclick: () => { hideMenu(); fn(); } }, icon(ic), el('span', {}, label))));
 }
@@ -176,6 +178,7 @@ async function boot() {
     await ensurePreset();
     await loadCharacters();
     initLayout();
+    initDialogueColors();
     await eventSource.emit(event_types.SETTINGS_LOADED, state.settings);
     await eventSource.emit(event_types.SETTINGS_LOADED_AFTER, state.settings);
     await eventSource.emit(event_types.APP_INITIALIZED);

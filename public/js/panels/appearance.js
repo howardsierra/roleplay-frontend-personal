@@ -3,11 +3,17 @@ import { state, saveSettingsDebounced, chatMetadata, saveChat } from '../state.j
 import { BUILTIN_THEMES, applyTheme, importTheme, exportTheme, currentTheme, isReverieTheme, resolveReverieTheme, toReverieTheme, reverieToSillyTavern, prefersLight } from '../themes.js';
 import { printMessages } from '../chat.js';
 import { applyBranding } from '../layout.js';
+import { dialogueSettings, refreshDialogueColors, openCastEditor } from '../dialogue-colors.js';
 import { popMenu } from '../chat.js';
 import { el, icon, field, select, textArea, textInput, toggle, slider, section, toast, pickFile, download, confirmDialog, promptDialog, debounce } from '../ui.js';
 
 let rootBody;
-const rerender = () => { rootBody.replaceChildren(); render(rootBody); };
+const rerender = () => {
+    // Park SillyTavern blocks (custom CSS, extension controls) back in #st-dom so they survive the re-render.
+    for (const block of rootBody.querySelectorAll('[data-st-park]')) document.getElementById('st-dom').append(block);
+    rootBody.replaceChildren();
+    render(rootBody);
+};
 
 const COLOR_KEYS = [
     ['main_text_color', 'Main text'],
@@ -157,6 +163,7 @@ export async function render(body) {
             toggle('Show timestamps', a.showTimestamps, v => { a.showTimestamps = v; saveSettingsDebounced(); printMessages(); }),
             toggle('Animated aurora backdrop', a.aurora, v => { a.aurora = v; save(); }),
             field('Enter key', select([['desktop', 'Sends on desktop, new line on phone'], ['always', 'Always sends'], ['never', 'Never sends (use the button)']], a.enterToSend, v => { a.enterToSend = v; saveSettingsDebounced(); }))),
+        dialogueSection(rerender),
         section('Colours', colorsBox,
             slider('Panel blur', editing.blur_strength ?? 14, { min: 0, max: 40, step: 1, onChange: v => { editing.blur_strength = v; a.theme = editing; save(); } })),
         await backgroundSection(a, save),
@@ -178,6 +185,39 @@ export async function render(body) {
         stThemeAddons(),
         section('Custom CSS', customCssBlock(),
             el('p', { class: 'hint' }, 'Applied after the theme\'s own custom_css. SillyTavern snippets and selectors (.mes, .mes_text, #chat, #send_form…) work here.')));
+}
+
+function dialogueSection(rerender) {
+    const d = dialogueSettings();
+    const save = () => { saveSettingsDebounced(); refreshDialogueColors(); };
+    const sources = [['avatar', 'From the avatar (smart)'], ['static', 'One fixed color'], ['off', 'Theme quote color']];
+    const colorPick = (value, onChange) => {
+        const input = el('input', { type: 'color', class: 'cast-color' });
+        input.value = value;
+        input.addEventListener('change', () => onChange(input.value));
+        return input;
+    };
+    return section('Dialogue colors',
+        toggle('Color dialogue by speaker', d.enabled, v => { d.enabled = v; save(); rerender(); }, 'Each speaker\'s "quotes" get their own color, like Smart Dialogue Colorizer and Prism.'),
+        d.enabled ? el('div', { class: 'stack' },
+            el('div', { class: 'grid-2' },
+                field('Character color', select(sources, d.charSource, v => { d.charSource = v; save(); rerender(); })),
+                field('Your color', select(sources, d.personaSource, v => { d.personaSource = v; save(); rerender(); }))),
+            d.charSource === 'static' || d.personaSource === 'static' ? el('div', { class: 'row gap' },
+                d.charSource === 'static' ? field('Character', colorPick(d.charStatic, v => { d.charStatic = v; save(); })) : null,
+                d.personaSource === 'static' ? field('You', colorPick(d.personaStatic, v => { d.personaStatic = v; save(); })) : null) : null,
+            slider('Saturation boost', d.saturation, { min: 0, max: 10, step: 1, onChange: v => { d.saturation = v; save(); } }),
+            slider('Brightness boost', d.brightness, { min: 0, max: 10, step: 1, onChange: v => { d.brightness = v; save(); } }),
+            toggle('Color speaker names too', d.colorNames, v => { d.colorNames = v; save(); }),
+            field('Multiple speakers in one reply', select([
+                ['auto', 'Ask the AI to tag each speaker (automatic)'],
+                ['macro', 'Ask the AI via {{dialogueColors}} in my preset'],
+                ['off', 'Off: one color per message'],
+            ], d.castTags, v => { d.castTags = v; save(); rerender(); }), 'The AI wraps each line in <font color="…" title="Name">. Known speakers are always repainted with their cast color, so they stay consistent.'),
+            d.castTags !== 'off' ? toggle('Color inner thoughts too', d.thoughts, v => { d.thoughts = v; save(); }) : null,
+            d.castTags !== 'off' ? toggle('Learn new speakers automatically', d.learn, v => { d.learn = v; save(); }) : null,
+            el('button', { class: 'btn small', onclick: openCastEditor }, icon('palette'), 'Edit this chat\'s cast colors'),
+            el('p', { class: 'hint' }, 'Custom CSS can use var(--character-color) on any message.')) : null);
 }
 
 const stripIds = t => {
