@@ -3,6 +3,8 @@ import { state, saveSettingsDebounced } from '../state.js';
 import { loaded } from '../st/extensions-loader.js';
 import { active, isEnabled, setEnabled, setExtensionSetting } from '../rv-ext/loader.js';
 import { PERMISSIONS, settingDefaults } from '../rv-ext/api.js';
+import { listLumiverse, setLumiverseEnabled, extensions as lvRunning } from '../spindle/host.js';
+import { settingsMounts } from '../spindle/ctx.js';
 import { el, icon, section, toast, confirmDialog, promptDialog, field, textInput, textArea, select } from '../ui.js';
 
 let rootBody;
@@ -18,7 +20,7 @@ const rerender = () => {
 export async function render(body) {
     rootBody = body;
     const all = await api.get('extensions');
-    const list = all.filter(e => e.type !== 'reverie');
+    const list = all.filter(e => e.type === 'sillytavern');
     const native = all.filter(e => e.type === 'reverie');
     const disabled = new Set(state.settings.extensions.disabled || []);
     const url = el('input', { class: 'input', type: 'url', placeholder: 'https://github.com/user/SillyTavern-Extension' });
@@ -78,8 +80,10 @@ export async function render(body) {
                 el('label', { class: 'switch small' }, sw, el('span', { class: 'switch-track' }))));
     });
 
+    const lumiverse = await listLumiverse();
     body.append(
         section('Reverie extensions', reverieSection(native)),
+        lumiverse.length ? section('Lumiverse extensions', lumiverseSection(lumiverse)) : null,
         section('Install an extension',
             el('div', { class: 'row gap' }, url, install),
             el('p', { class: 'hint' }, icon('triangle-exclamation'), ' Extensions run with full access to this app, just like in SillyTavern. Only install ones you trust. Reverie emulates SillyTavern\'s extension API (getContext, events, slash commands, popups, settings); extensions that depend on SillyTavern server endpoints may only partly work.')),
@@ -188,5 +192,55 @@ function reverieSection(native) {
         el('p', { class: 'hint' }, 'Built for Reverie: they turn on and off instantly, ask for permissions up front, keep their settings in sync across devices, and can add sheet tabs, composer buttons and custom message blocks in both layouts.'),
         rows.length ? el('div', { class: 'stack' }, rows) : el('div', { class: 'empty' }, 'None installed yet. Install one by URL below, or create a starter to build your own.'),
         el('div', { class: 'row gap' }, create),
+    ];
+}
+
+const LV_STATUS = { running: 'running', 'frontend-only': 'running (no server part)', starting: 'starting…', stopped: 'off', error: 'failed' };
+
+function lumiverseSection(list) {
+    const mounts = new Map(settingsMounts().map(([key, node]) => [key.split(':')[0], node]));
+    const rows = list.map(info => {
+        const m = info.manifest;
+        const id = m.identifier;
+        const front = lvRunning.get(id);
+        const sw = el('input', { type: 'checkbox', class: 'switch-input' });
+        sw.checked = info.enabled;
+        sw.addEventListener('change', async () => {
+            sw.disabled = true;
+            try {
+                await setLumiverseEnabled(info, sw.checked);
+                toast(`${m.name} ${sw.checked ? 'turned on' : 'turned off'}`, 'success', { timeout: 1800 });
+            } catch (err) { toast(err.message, 'error'); sw.checked = !sw.checked; }
+            sw.disabled = false;
+            rerender();
+        });
+        const error = info.error || front?.error;
+        const perms = (m.permissions || []).map(p => el('span', { class: `badge perm${p === 'tools' ? ' off' : ''}`, title: p === 'tools' ? 'Native tool calling isn\'t available in Reverie; the extension uses its fallback' : '' }, p));
+        const mount = mounts.get(id);
+        return el('div', { class: `ext-row lv-native${error ? ' error' : ''}` },
+            el('div', { class: 'ext-info' },
+                el('div', { class: 'ext-name' }, icon('moon', 'dim'), ' ', m.name || info.name, m.version ? el('span', { class: 'dim' }, ` v${m.version}`) : null),
+                el('div', { class: 'hint' }, m.author ? `by ${m.author} · ` : '', error ? `⚠ ${error}` : LV_STATUS[info.status] || info.status),
+                m.description ? el('div', { class: 'hint' }, m.description) : null,
+                el('div', { class: 'row gap wrap perm-row' }, perms),
+                mount ? el('details', { class: 'ext-settings', open: true }, el('summary', {}, icon('sliders'), ' Settings'), mount) : null),
+            el('div', { class: 'row gap' },
+                el('button', { class: 'icon-btn', title: 'Restart', onclick: async () => {
+                    try { await api.post(`spindle/${encodeURIComponent(id)}/restart`); toast('Restarted. Reload the page to restart its interface too.', 'success'); } catch (err) { toast(err.message, 'error'); }
+                } }, icon('rotate-right')),
+                el('button', { class: 'icon-btn', title: 'Update', onclick: async () => {
+                    try { await api.post(`extensions/${encodeURIComponent(info.name)}/update`); toast('Updated. Reload to apply.', 'success'); } catch (err) { toast(err.message, 'error'); }
+                } }, icon('rotate')),
+                el('button', { class: 'icon-btn danger', title: 'Uninstall', onclick: async () => {
+                    if (!await confirmDialog(`Uninstall ${m.name}?`, { danger: true, okLabel: 'Uninstall' })) return;
+                    await api.del(`extensions/${encodeURIComponent(info.name)}`);
+                    toast('Uninstalled. Reload to fully unload it.', 'success');
+                    rerender();
+                } }, icon('trash-can')),
+                el('label', { class: 'switch small' }, sw, el('span', { class: 'switch-track' }))));
+    });
+    return [
+        el('p', { class: 'hint' }, 'Extensions made for Lumiverse (Spindle). Their server part runs inside Reverie\'s server, their interface runs here. Install them by URL below. Newly installed ones appear after a reload.'),
+        el('div', { class: 'stack' }, rows),
     ];
 }

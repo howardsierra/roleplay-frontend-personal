@@ -33,7 +33,7 @@ export async function loadExtensions() {
     const disabled = new Set(state.settings.extensions.disabled || []);
     const forced = new Set(state.settings.extensions.forceLoad || []);
     for (const ext of list) {
-        if (ext.type === 'reverie' || disabled.has(ext.name)) continue;
+        if (ext.type === 'reverie' || ext.type === 'lumiverse' || disabled.has(ext.name)) continue;
         const reason = reskinReason(ext);
         // Interface reskins load automatically in the classic (SillyTavern-shaped) layout.
         if (reason && state.settings.appearance.layout !== 'classic' && !forced.has(ext.name)) {

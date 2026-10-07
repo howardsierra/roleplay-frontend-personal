@@ -10,6 +10,7 @@ import { pipeline } from 'node:stream/promises';
 import * as tar from 'tar';
 import { DATA_DIR, DIRS, readJson, removeFile, safeName, within, writeJson } from '../lib/storage.js';
 import { buildShimModule, rewriteImports } from '../lib/esm-shim.js';
+import { listSpindleExtensions, startExtension, stopExtension } from '../spindle/host.js';
 
 const run = promisify(execFile);
 export const apiRouter = express.Router();
@@ -54,10 +55,12 @@ async function download(info, target, branch) {
 async function describe(name) {
     const dir = within(DIRS.extensions, name);
     // Reverie-native extensions ship reverie-extension.json; SillyTavern ones ship manifest.json.
+    // Lumiverse (Spindle) extensions ship spindle.json.
     const native = await readJson(path.join(dir, 'reverie-extension.json'));
-    const manifest = native || await readJson(path.join(dir, 'manifest.json'));
+    const spindle = !native && await readJson(path.join(dir, 'spindle.json'));
+    const manifest = native || spindle || await readJson(path.join(dir, 'manifest.json'));
     if (!manifest) return null;
-    const type = native ? 'reverie' : 'sillytavern';
+    const type = native ? 'reverie' : spindle ? 'lumiverse' : 'sillytavern';
     let source = await readJson(path.join(dir, '.reverie-source.json'));
     if (!source && fs.existsSync(path.join(dir, '.git'))) {
         try {
@@ -88,21 +91,32 @@ apiRouter.post('/install', async (req, res) => {
     if (fs.existsSync(target)) return res.status(409).json({ error: `"${name}" is already installed` });
     try {
         await download(info, target, branch);
-        if (!fs.existsSync(path.join(target, 'manifest.json')) && !fs.existsSync(path.join(target, 'reverie-extension.json'))) {
-            throw Object.assign(new Error('That repository has no manifest.json or reverie-extension.json, so it is not an extension'), { status: 400 });
+        if (!['manifest.json', 'reverie-extension.json', 'spindle.json'].some(f => fs.existsSync(path.join(target, f)))) {
+            throw Object.assign(new Error('That repository has no manifest.json, spindle.json or reverie-extension.json, so it is not an extension'), { status: 400 });
+        }
+        const sp = await readJson(path.join(target, 'spindle.json'));
+        if (sp && !fs.existsSync(path.join(target, sp.entry_backend || 'dist/backend.js')) && !fs.existsSync(path.join(target, sp.entry_frontend || 'dist/frontend.js'))) {
+            throw Object.assign(new Error('This Lumiverse extension has no built dist/ folder. Reverie can\'t build TypeScript sources; ask the author for a release with dist/ included.'), { status: 400 });
         }
     } catch (err) {
         await removeFile(target);
         throw err;
     }
+    await restartSpindle(name);
     res.json(await describe(name));
 });
+
+async function restartSpindle(name) {
+    const ext = (await listSpindleExtensions()).find(e => e.name === name);
+    if (ext) await startExtension(ext).catch(err => console.error(err));
+}
 
 apiRouter.post('/:name/update', async (req, res) => {
     const name = safeName(req.params.name);
     const dir = within(DIRS.extensions, name);
     if (fs.existsSync(path.join(dir, '.git'))) {
         await run('git', ['-C', dir, 'pull', '--ff-only'], { timeout: 120000 });
+        await restartSpindle(name);
         return res.json(await describe(name));
     }
     const ext = await describe(name);
@@ -112,10 +126,13 @@ apiRouter.post('/:name/update', async (req, res) => {
     await download(parseRepo(ext.source.url), tmp, ext.source.branch);
     await removeFile(dir);
     await fsp.rename(tmp, dir);
+    await restartSpindle(name);
     res.json(await describe(name));
 });
 
 apiRouter.delete('/:name', async (req, res) => {
+    const sp = (await listSpindleExtensions()).find(e => e.name === safeName(req.params.name));
+    if (sp) await stopExtension(sp.manifest.identifier);
     await removeFile(within(DIRS.extensions, req.params.name));
     res.json({ ok: true });
 });

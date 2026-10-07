@@ -112,7 +112,31 @@ If an extension imports a name Reverie doesn't provide, it gets a harmless no-op
 | ✅ Built in instead | Preset Organizer & Prompt Checkboxes (sections, search, bulk toggles, checkboxes and the preset navigator are part of Reverie's prompt manager), Sampler Commands (`/sampler-get` and `/sampler-set` are native), Backup Manager (Settings → More → Backup), Background Manager (per-chat backgrounds are native) |
 | ⚪ Nothing to attach to | Persona Manager, Avatar Banner: they restyle SillyTavern's own persona and character panels, which Reverie replaces with its own. They load without errors. |
 | ✅ With the classic layout | Moonlit Echoes Theme reskins SillyTavern's whole interface. Turn on **Settings → Look → Interface layout → Classic** (or click **Switch to classic layout** on its card). Reverie then uses SillyTavern's geometry: a fixed top bar, a centred chat column and side drawers. In the Reverie layout it's skipped unless you choose **Load anyway**. |
+| ➡️ Built in instead | Smart Dialogue Colorizer depends on SillyTavern's own character editor; use **Dialogue colors** instead (or Prism). |
 | ❌ Needs ST server plugin | WebSearch calls SillyTavern's search server plugin, which Reverie doesn't include. |
+
+## Lumiverse extensions
+
+Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-oc/Lumiverse) (they ship a `spindle.json`). Install them by URL in **Settings → Extensions** like any other, then reload.
+
+- Their **server part** runs in a worker thread inside Reverie's server, with Lumiverse's `spindle` API: storage, encrypted secrets, the CORS proxy, macros, prompt interceptors, events, child processes (for LumiScript), OAuth callbacks, and the chat/character/persona/generation/image APIs (answered by your open Reverie tab).
+- Their **interface** runs in the page with Lumiverse's `ctx` API: drawer tabs appear as tabs on the character sheet, input-bar actions go in the ✨ menu, plus floating widgets, dock panels, modals, context menus, message tag interceptors and DOM helpers. Lumiverse's `--lumiverse-*` theme variables are generated from your Reverie theme.
+- Extensions must include their built `dist/` folder (Reverie doesn't compile TypeScript).
+
+| Extension | Status |
+|---|---|
+| Silly Sim Tracker (Lumiverse) | ✅ Tracker cards render in messages; prompt interceptor and macros work |
+| Prism | ✅ Palette, scene setup, dialogue painting, prompt registry (Hybrid/LLM modes) |
+| Pocket | ✅ Phone (dock on desktop, full screen on phones), world-state extraction, tag fallback. Native tool calling isn't available, so Pocket uses its `<lumi-phone>` tag mode |
+| Lumiverse Timeline | ✅ Weave posts, replies, actor roster |
+| Inlay Illustrator | ✅ Panel, parser and image generation through Reverie's image settings (pick a parser connection in its panel first) |
+| LumiScript | ✅ Scripts run in child processes; the editor loads Monaco from cdn.jsdelivr.net |
+| Spotify Controls | ✅ Panel and mini player; connect your Spotify account from its settings |
+| Palette | ⚠️ Loads; colour "Boost", tokens and custom CSS work, but its element recipes target Lumiverse's own page structure |
+
+## Dialogue colors
+
+**Settings → Look → Dialogue colors** colours each speaker's quotes, Smart Dialogue Colorizer–style (colour from the avatar, a fixed colour, or a per-character override, plus saturation/brightness boosts and coloured names). With **multiple speakers**, the AI tags each line with `<font color title="Name">`; known speakers are always repainted with their cast colour and new named speakers are learned into the chat's cast (✨ menu → **Cast colors**). Custom CSS can use `var(--character-color)`.
 
 ## Reverie extensions, presets and themes
 

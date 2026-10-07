@@ -17,13 +17,21 @@ const PIC_TAGS = /<pic\s+prompt\s*=\s*(["'])([\s\S]*?)\1\s*\/?>(?:\s*<\/pic>)?|\
 let scopeCounter = 0;
 const LANG_ALIASES = { js: 'javascript', mjs: 'javascript', jsx: 'javascript', ts: 'typescript', py: 'python', sh: 'bash', shell: 'bash', yml: 'yaml', md: 'markdown', stsc: 'stscript' };
 
+/** Display filters run on message text before markdown (used for Lumiverse tag interceptors). */
+export const displayFilters = new Set(); // fn(text, { isUser, streaming, message, id }) -> text
+
 /**
  * @returns {{ html: string, widgets: Array<{kind, code}>, pics: string[], wholeDoc: boolean }}
  */
-export function formatMessage(text, { isUser = false, depth, streaming = false, isReasoning = false } = {}) {
+export function formatMessage(text, { isUser = false, depth, streaming = false, isReasoning = false, message = null, id = null } = {}) {
     const widgets = [];
     const pics = [];
     let src = applyRegex(String(text ?? ''), isReasoning ? REGEX_PLACEMENT.REASONING : (isUser ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT), { isMarkdown: true, depth });
+    if (!isReasoning) {
+        for (const filter of displayFilters) {
+            try { src = filter(src, { isUser, streaming, message, id }) ?? src; } catch (err) { console.error('Display filter failed', err); }
+        }
+    }
     const render = state.settings.render;
 
     if (state.settings.image.inlineTags) {
@@ -92,6 +100,7 @@ export function hydrate(container, result, { streaming = false, onPic, message }
         const lang = code.className.match(/language-([\w+#-]+)/)?.[1]?.toLowerCase();
         const canonical = LANG_ALIASES[lang];
         if (canonical) code.classList.add(`language-${canonical}`);
+        if (lang && code.parentElement?.tagName === 'PRE') code.parentElement.dataset.codeLang = lang;
         code.classList.add('hljs');
     }
     for (const a of container.querySelectorAll('a[href]')) {

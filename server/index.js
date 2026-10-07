@@ -11,6 +11,8 @@ import aiRouter from './routes/ai.js';
 import filesRouter from './routes/files.js';
 import { apiRouter as extensionsApi, serveRouter as extensionsServe, dataRouter as extDataRouter } from './routes/extensions.js';
 import stCompatRouter, { USER_FILES } from './routes/st-compat.js';
+import { spindleRouter, spindleServe, oauthRouter, lumiverseAliases } from './routes/spindle.js';
+import { startAll as startSpindle } from './spindle/host.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -119,6 +121,9 @@ app.use('/api/worlds', collectionRouter(DIRS.worlds, { summary: w => ({ id: w.id
 app.use('/api/themes', collectionRouter(DIRS.themes));
 app.use('/api/personas', collectionRouter(DIRS.personas));
 app.use('/api/extensions', extensionsApi);
+app.use('/api/spindle', spindleRouter);
+app.use('/api/spindle-oauth', oauthRouter);
+app.use('/api/v1', lumiverseAliases);
 app.use('/api/ext-data', extDataRouter);
 app.use('/api', aiRouter);
 app.use('/api', filesRouter);
@@ -151,6 +156,7 @@ for (const [name, rel] of Object.entries(vendor)) {
 }
 app.use('/vendor/fontawesome', express.static(path.join(ROOT, 'node_modules/@fortawesome/fontawesome-free'), { maxAge: '30d' }));
 app.use(extensionsServe);
+app.use(spindleServe);
 app.use(express.static(PUBLIC, { index: 'index.html', setHeaders: res => res.set('Cache-Control', 'no-cache') }));
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route' }));
@@ -164,6 +170,7 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(PORT, HOST, () => {
+    startSpindle().catch(err => console.error('Lumiverse extensions failed to start', err));
     console.log(`\n  ✦ Reverie is running → http://localhost:${PORT}`);
     console.log(`    data folder: ${DATA_DIR}`);
     if (!PASSWORD) console.log('    ⚠ No APP_PASSWORD set — anyone who can reach this address can use it. Set one before exposing it online.\n');

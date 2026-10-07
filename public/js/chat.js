@@ -9,6 +9,7 @@ import { formatMessage, hydrate } from './render.js';
 import { el, icon, toast, confirmDialog, modal, escapeHtml, isMobile } from './ui.js';
 import { points, plainMessage, onPointsChanged } from './rv-ext/points.js';
 import { paintMessage } from './dialogue-colors.js';
+import { messageId } from './message-ids.js';
 
 const chatEl = () => document.getElementById('chat');
 const textarea = () => document.getElementById('send_textarea');
@@ -81,8 +82,19 @@ function messageTemplate(mes, id) {
     return node;
 }
 
+/** Called after a message is (re)rendered: hook(node, mes, index, { streaming }). */
+export const renderHooks = new Set();
+
 export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
     node.setAttribute('mesid', id);
+    node.setAttribute('data-message-id', messageId(mes));
+    node.setAttribute('data-message-index', id);
+    // Lumiverse's message anatomy, for extensions that look for it.
+    node.dataset.part = streaming ? 'streaming' : mes.is_user ? 'user' : 'character';
+    node.dataset.swipeId = mes.swipe_id ?? 0;
+    node.querySelector('.mes_block')?.classList.add('rv-bubble');
+    const prose = node.querySelector('.mes_text');
+    if (prose && !prose.dataset.component) { prose.dataset.component = 'MessageContent'; prose.classList.add('rv-prose'); }
     node.setAttribute('ch_name', mes.name ?? '');
     node.setAttribute('is_system', String(!!mes.is_system));
     node.classList.toggle('hidden_mes', !!mes.is_system);
@@ -92,7 +104,7 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
 
     const depth = state.chat.length - 1 - id;
     const textEl = node.querySelector('.mes_text');
-    const result = formatMessage(mes.mes, { isUser: mes.is_user, depth, streaming });
+    const result = formatMessage(mes.mes, { isUser: mes.is_user, depth, streaming, message: mes, id });
     textEl.innerHTML = result.html;
     hydrate(textEl, result, { streaming, message: mes, onPic: (prompt, force) => import('./imagegen.js').then(m => m.generateInlinePic(id, prompt, force)) });
     if (streaming && !mes.mes) textEl.innerHTML = '<span class="rv-dots"><span></span><span></span><span></span></span>';
@@ -130,6 +142,9 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
     }
 
     paintMessage(node, mes);
+    for (const hook of renderHooks) {
+        try { hook(node, mes, id, { streaming }); } catch (err) { console.error('Render hook failed', err); }
+    }
 
     const swipes = mes.swipes?.length || 1;
     const isLast = id === state.chat.length - 1;
@@ -530,8 +545,8 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             else prefixText = target.mes;
         }
 
-        const { messages, prefill } = await buildPrompt({ type, quietPrompt, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
-        const body = { ...connectionBody(), messages, params: samplerParams() };
+        const { messages, prefill, extraParams } = await buildPrompt({ type, quietPrompt, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
+        const body = { ...connectionBody(), messages, params: { ...samplerParams(), ...extraParams } };
 
         if (type === 'quiet' && !quietToLoud) {
             const res = await completion(body, { signal: controller.signal });

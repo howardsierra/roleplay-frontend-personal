@@ -10,6 +10,7 @@ import { openImageStudio, openGallery } from './imagegen.js';
 import { installCompat, installStDom, frameRpc, executeSlashCommands, registerNativeOverrides } from './st/compat.js';
 import { loadExtensions } from './st/extensions-loader.js';
 import { loadReverieExtensions } from './rv-ext/loader.js';
+import { loadLumiverseExtensions } from './spindle/host.js';
 import { initDialogueColors, openCastEditor } from './dialogue-colors.js';
 import { setFrameRpcHandler } from './render.js';
 import { initLayout } from './layout.js';
@@ -187,6 +188,7 @@ async function boot() {
     await loadExtensions();
     registerNativeOverrides();
     await loadReverieExtensions();
+    await loadLumiverseExtensions().catch(err => console.error('Lumiverse extensions failed to load', err));
     await eventSource.emit(event_types.APP_READY);
 
     const last = state.settings.lastCharacterId;

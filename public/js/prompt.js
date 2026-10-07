@@ -1,4 +1,5 @@
 // Builds the chat-completion message list from the active preset, character, persona, lore and chat.
+import { messageId } from './message-ids.js';
 import { state, currentPersona, charName, userName, chatMetadata } from './state.js';
 import { substituteParams, readVariable, variables } from './macros.js';
 import { evaluateCondition, modelMatches } from './conditions.js';
@@ -193,7 +194,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
         const depth = history.length - 1 - i;
         let content = applyRegex(m.mes ?? '', m.is_user ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT, { isPrompt: true, depth });
         if (names === 2) content = `${m.name}: ${content}`;
-        const out = { role: m.is_user ? 'user' : 'assistant', content };
+        const out = { role: m.is_user ? 'user' : 'assistant', content, __src: { id: messageId(m), index: chat.indexOf(m) } };
         if (names === 1 && m.name) out.name = m.name.replace(/[^\w-]/g, '_').slice(0, 64);
         return out;
     });
@@ -282,15 +283,19 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     messages = messages.filter(m => String(m.content).trim() || m === messages.at(-1));
 
-    // Reverie extension prompt hooks (rv.prompt.onBuild).
+    // Reverie extension prompt hooks (rv.prompt.onBuild, Lumiverse interceptors). Hooks may add request params.
+    const extraParams = {};
     for (const hook of points.promptHooks.list()) {
         try {
-            const out = await hook(messages, { type, dryRun, chatLength: history.length });
+            const out = await hook(messages, { type, dryRun, chatLength: history.length, params: extraParams });
             if (Array.isArray(out)) messages = out;
         } catch (err) {
             console.error('Extension prompt hook failed', err);
         }
     }
+
+    // Internal annotations (like __src) never reach the provider.
+    messages = messages.map(m => Object.fromEntries(Object.entries(m).filter(([k]) => !k.startsWith('__'))));
 
     const eventData = { chat: messages, dryRun };
     await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, eventData);
@@ -298,7 +303,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     const tokens = messages.reduce((n, m) => n + estimateTokens(m.content) + 4, 0);
     breakdown.push({ label: `Chat history (${kept.length} msgs${dropped ? `, ${dropped} trimmed` : ''})`, role: 'mixed', tokens: kept.reduce((n, m) => n + estimateTokens(m.content), 0) });
-    return { messages, breakdown, tokens, prefill, lore: lore.activated };
+    return { messages, breakdown, tokens, prefill, lore: lore.activated, extraParams };
 }
 
 export function samplerParams() {

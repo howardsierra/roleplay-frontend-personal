@@ -278,6 +278,7 @@ export function applyTheme() {
     document.body.classList.toggle('has-bg', !!bg);
 
     document.getElementById('custom-style').textContent = [t.custom_css || '', a.customCss || ''].join('\n');
+    window.dispatchEvent(new CustomEvent('rv:theme-applied'));
 }
 
 // =====================================================================

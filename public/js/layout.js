@@ -310,7 +310,16 @@ export async function renderSheet() {
     body.replaceChildren(content);
 }
 
+/** Open the character sheet on a given tab (used by Lumiverse drawer tabs). */
+export function openSheetTab(id) {
+    sheetTab = id;
+    sheetVisible(true);
+    renderSheet();
+}
+export const sheetState = () => ({ open: document.body.classList.contains('sheet-docked') || !!$id('sheet-panel')?.classList.contains('open'), tabId: sheetTab });
+
 function sheetVisible(on) {
+    queueMicrotask(() => window.dispatchEvent(new CustomEvent('rv:sheet', { detail: { open: on, tabId: sheetTab } })));
     const docked = wide(SHEET_DOCK);
     if (docked) {
         state.settings.ui ??= {};
@@ -330,7 +339,8 @@ function renderSheetTabs() {
     nav.querySelectorAll('.tab.ext-tab').forEach(n => n.remove());
     const anchor = nav.querySelector('.grow');
     for (const t of points.sheetTabs.list()) {
-        anchor.before(el('button', { class: 'tab ext-tab', 'data-tab': t.id, title: t.title }, t.icon ? icon(t.icon) : null, el('span', {}, t.title)));
+        const ic = t.iconSvg ? el('span', { class: 'rvext-svg', html: t.iconSvg }) : t.iconUrl ? el('img', { class: 'rvext-svg', src: t.iconUrl, alt: '' }) : t.icon ? icon(t.icon) : null;
+        anchor.before(el('button', { class: 'tab ext-tab', 'data-tab': t.id, title: t.title }, ic, el('span', {}, t.shortName || t.title)));
     }
 }
 
@@ -344,7 +354,8 @@ function renderExtensionUi() {
     const menu = $id('extensions-actions-menu');
     menu.querySelectorAll('.rvext-item').forEach(n => n.remove());
     for (const m of points.menuItems.list()) {
-        menu.append(el('button', { class: 'menu-item list-group-item rvext-item', onclick: () => m.onClick?.() }, icon(m.icon || 'puzzle-piece'), el('span', {}, m.label)));
+        const ic = m.iconSvg ? el('span', { class: 'rvext-svg', html: m.iconSvg }) : m.iconUrl ? el('img', { class: 'rvext-svg', src: m.iconUrl, alt: '' }) : icon(m.icon || 'puzzle-piece');
+        menu.append(el('button', { class: 'menu-item list-group-item rvext-item', onclick: () => m.onClick?.() }, ic, el('span', {}, m.label)));
     }
 }
 
@@ -363,6 +374,7 @@ function bindSheet() {
         if (!tab) return;
         sheetTab = tab.dataset.tab;
         renderSheet();
+        window.dispatchEvent(new CustomEvent('rv:sheet', { detail: { open: true, tabId: sheetTab } }));
     });
     const refresh = () => { if (document.body.classList.contains('sheet-docked') || $id('sheet-panel').classList.contains('open')) renderSheet(); };
     eventSource.on(event_types.CHAT_CHANGED, refresh);

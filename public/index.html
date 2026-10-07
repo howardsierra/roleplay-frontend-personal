@@ -53,7 +53,7 @@
         </header>
 
         <!-- ============ Main stage ============ -->
-        <main id="sheld">
+        <main id="sheld" class="rv-chatColumnInner">
             <section id="home" class="home">
                 <div class="home-hero">
                     <div class="home-mark">✦</div>
@@ -70,7 +70,7 @@
                 </div>
             </section>
 
-            <div id="chat-toolbar" class="chat-toolbar">
+            <div id="chat-toolbar" class="chat-toolbar rv-chatToolbar">
                 <label class="tb-preset" title="Active preset"><i class="fa-solid fa-sliders"></i><select id="quick-preset"></select></label>
                 <div class="tb-search">
                     <i class="fa-solid fa-magnifying-glass"></i>
@@ -173,6 +173,8 @@
 
     <!-- SillyTavern-compatible hosts that extensions look for -->
     <div id="movingDivs"></div>
+    <!-- Lumiverse extensions read theme variables from #root -->
+    <div id="root" hidden></div>
     <template id="generic_draggable_template">
         <div class="draggable">
             <div class="dragTitle"></div>

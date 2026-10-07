@@ -164,18 +164,38 @@ async function chatOpenAI({ provider, baseUrl, key, model, messages, params, str
 // ---------- Anthropic native ----------
 const THINKING_BUDGET = { minimal: 1024, low: 2048, medium: 8192, high: 16384, max: 32000 };
 
+/** OpenAI-style content (string or parts with image_url) → Anthropic content blocks. */
+function anthropicBlocks(content) {
+    if (!Array.isArray(content)) return [{ type: 'text', text: String(content ?? '') }];
+    const out = [];
+    for (const part of content) {
+        if (part?.type === 'text') out.push({ type: 'text', text: String(part.text ?? '') });
+        else if (part?.type === 'image_url' || part?.type === 'image') {
+            const url = part.image_url?.url || part.url || (part.data ? `data:${part.mime_type || 'image/png'};base64,${part.data}` : '');
+            const m = String(url).match(/^data:([^;]+);base64,(.+)$/);
+            if (m) out.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } });
+            else if (url) out.push({ type: 'image', source: { type: 'url', url } });
+        }
+    }
+    return out;
+}
+const textOf = content => (Array.isArray(content) ? content.filter(p => p?.type === 'text').map(p => p.text).join('\n') : String(content ?? ''));
+
 export function toAnthropic(messages, { cacheSystem = true } = {}) {
     const system = [];
     let i = 0;
-    while (i < messages.length && messages[i].role === 'system') system.push(messages[i++].content);
+    while (i < messages.length && messages[i].role === 'system') system.push(textOf(messages[i++].content));
     const out = [];
     for (const m of messages.slice(i)) {
         const role = m.role === 'assistant' ? 'assistant' : 'user';
         // Mid-chat system prompts become user turns (Claude has no mid-chat system role).
         const content = m.content;
         const last = out.at(-1);
-        if (last && last.role === role) last.content += `\n\n${content}`;
-        else out.push({ role, content: String(content ?? '') });
+        const multimodal = Array.isArray(content) || Array.isArray(last?.content);
+        if (last && last.role === role) {
+            if (multimodal) last.content = [...anthropicBlocks(last.content), { type: 'text', text: '\n\n' }, ...anthropicBlocks(content)].filter(b => b.type !== 'text' || b.text);
+            else last.content += `\n\n${content}`;
+        } else out.push({ role, content: Array.isArray(content) ? anthropicBlocks(content) : String(content ?? '') });
     }
     if (!out.length || out[0].role !== 'user') out.unshift({ role: 'user', content: '[Start]' });
     const systemText = system.join('\n\n').trim();
@@ -188,7 +208,7 @@ async function chatAnthropic({ baseUrl, key, model, messages, params: p, stream,
     const converted = toAnthropic(messages, { cacheSystem: p.cache_system !== false });
     // A trailing assistant message acts as a prefill; Claude rejects trailing whitespace there.
     const last = converted.messages.at(-1);
-    if (last?.role === 'assistant') last.content = last.content.trimEnd();
+    if (last?.role === 'assistant' && typeof last.content === 'string') last.content = last.content.trimEnd();
     if (last?.role === 'assistant' && !last.content) converted.messages.pop();
     const body = {
         model,
@@ -204,7 +224,9 @@ async function chatAnthropic({ baseUrl, key, model, messages, params: p, stream,
         // Extended thinking cannot be combined with an assistant prefill.
         if (converted.messages.at(-1)?.role === 'assistant') {
             const prefill = converted.messages.pop();
-            converted.messages.at(-1).content += `\n\n${prefill.content}`;
+            const prev = converted.messages.at(-1);
+            if (typeof prev.content === 'string') prev.content += `\n\n${textOf(prefill.content)}`;
+            else prev.content.push({ type: 'text', text: textOf(prefill.content) });
         }
     } else {
         if (p.temperature != null) body.temperature = Math.min(1, p.temperature);
