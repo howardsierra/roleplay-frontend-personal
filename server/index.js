@@ -106,7 +106,7 @@ const PUBLIC_PATHS = new Set(['/login.html', '/css/login.css', '/manifest.webman
 app.use((req, res, next) => {
     // Media uses unguessable random names and must load inside sandboxed iframes (no cookies there).
     if (isAuthed(req) || PUBLIC_PATHS.has(req.path) || req.path.startsWith('/files/')) return next();
-    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Not logged in' });
+    if (req.path.startsWith('/api/')) return res.status(401).set('X-Reverie-Auth', 'login-required').json({ error: 'Not logged in' });
     if (req.method === 'GET' && (req.path === '/' || req.path.endsWith('.html'))) return res.redirect('/login.html');
     return res.status(401).end();
 });

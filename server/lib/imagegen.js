@@ -14,6 +14,8 @@ export const IMAGE_PROVIDERS = {
     custom: { label: 'Custom (OpenAI-compatible images)', base: '' },
 };
 
+// The provider's 401/403 means a bad API key, not that you're logged out of Reverie.
+const upstreamStatus = status => (status >= 500 || status === 401 || status === 403 ? 502 : status);
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
 async function check(res) {
@@ -24,7 +26,7 @@ async function check(res) {
         const j = JSON.parse(text);
         text = j.error?.message || j.message || j.detail || text;
     } catch { /* not json */ }
-    throw httpError(res.status >= 500 ? 502 : res.status, `Image provider returned ${res.status}: ${String(text).slice(0, 600)}`);
+    throw httpError(upstreamStatus(res.status), `Image provider returned ${res.status}: ${String(text).slice(0, 600)}`);
 }
 
 function sniffExt(buf) {

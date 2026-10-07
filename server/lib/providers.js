@@ -13,6 +13,8 @@ export const CHAT_PROVIDERS = {
     custom: { label: 'Custom (OpenAI-compatible)', base: '', extended: true },
 };
 
+// The provider's 401/403 means a bad API key, not that you're logged out of Reverie.
+const upstreamStatus = status => (status >= 500 || status === 401 || status === 403 ? 502 : status);
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
 export function resolveBase(provider, baseUrl) {
@@ -52,7 +54,8 @@ async function upstreamError(res) {
             if (typeof detail !== 'string') detail = JSON.stringify(detail);
         } catch { detail = body; }
     } catch { /* ignore */ }
-    return httpError(res.status >= 500 ? 502 : res.status, `Provider returned ${res.status}: ${String(detail).slice(0, 800)}`);
+    const hint = res.status === 401 || res.status === 403 ? ' (check the API key for this provider)' : '';
+    return httpError(upstreamStatus(res.status), `Provider returned ${res.status}${hint}: ${String(detail).slice(0, 800)}`);
 }
 
 export async function listModels({ provider, baseUrl, key }) {

@@ -1,7 +1,8 @@
 // Thin fetch wrapper for the Reverie server.
 
 async function handle(res) {
-    if (res.status === 401) {
+    // Only Reverie's own login check sends people to the password screen.
+    if (res.status === 401 && res.headers.get('X-Reverie-Auth') === 'login-required') {
         location.href = 'login.html';
         throw new Error('Not logged in');
     }
