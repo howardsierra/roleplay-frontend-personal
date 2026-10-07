@@ -132,6 +132,17 @@ export async function saveChat() {
     return chatSaving;
 }
 
+/** Saved OpenAI-compatible endpoints ({ id, name, baseUrl }); each has its own key on the server. */
+export function customEndpoint(c = state.settings.connection) {
+    return c.provider === 'custom' ? (state.settings.connection.endpoints || []).find(e => e.id === c.endpointId) || null : null;
+}
+
+/** The provider fields every chat request sends (the server picks the right API key from them). */
+export function connectionRequest(c = state.settings.connection) {
+    const ep = customEndpoint(c);
+    return { provider: c.provider, model: c.model, baseUrl: c.baseUrl || ep?.baseUrl || '', ...(ep ? { endpointId: ep.id } : {}) };
+}
+
 export function currentPersona() {
     const { personas, personaId } = state.settings;
     return personas.find(p => p.id === personaId) || personas[0] || { id: null, name: 'User', description: '', avatar: '' };

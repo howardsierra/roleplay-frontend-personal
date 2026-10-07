@@ -1,6 +1,6 @@
 // Answers spindle.* calls from Lumiverse extension backends that need Reverie's data or UI.
 // The server forwards them over the bridge; each handler gets (ext, ...args) and returns plain data.
-import { state, saveChat, saveSettingsDebounced, currentPersona } from '../state.js';
+import { state, saveChat, saveSettingsDebounced, currentPersona, connectionRequest } from '../state.js';
 import { api, completion } from '../api.js';
 import { eventSource, event_types } from '../events.js';
 import { samplerParams } from '../prompt.js';
@@ -257,9 +257,9 @@ async function runGeneration(input = {}, kind = 'raw') {
     let messages = input.messages;
     if (!messages?.length && kind === 'quiet' && input.prompt) messages = [{ role: 'user', content: input.prompt }];
     const body = {
+        ...connectionRequest(conn),
         provider: input.provider || conn.provider,
         model: input.model || params.model || conn.model,
-        baseUrl: conn.baseUrl,
         messages: toProviderMessages(messages || []),
         params,
     };
