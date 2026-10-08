@@ -1341,3 +1341,24 @@ body:has(#modal-root .modal-wrap) [data-rv-lifted] { visibility: hidden !importa
     .insp-actions .btn { padding-inline: 10px; }
     .rv-gen-inspect { margin-left: 0; }
 }
+
+/* ---------------------------------------------------------------- edit history */
+.rv-edited { all: unset; cursor: pointer; margin-left: 6px; font-size: .68em; color: var(--rv-text-faint, var(--rv-text-dim)); display: inline-flex; gap: 4px; align-items: center; padding: 1px 7px; border-radius: 99px; transition: color .2s, background .2s; }
+.rv-edited:hover { color: var(--rv-accent); background: var(--rv-surface); }
+.rv-edited.hidden { display: none; }
+.hist-intro { margin: 0 0 12px; font-size: .88em; }
+.hist-list { display: flex; flex-direction: column; gap: 6px; position: relative; }
+.hist-item { border-radius: 14px; border: 1px solid var(--SmartThemeBorderColor); background: var(--rv-surface); overflow: hidden; }
+.hist-item summary { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; list-style: none; font-size: .9em; }
+.hist-item summary::-webkit-details-marker { display: none; }
+.hist-item summary .dim { color: var(--rv-text-dim); font-size: .9em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rv-text-dim); flex: none; }
+.hist-item.current .hist-dot { background: var(--rv-accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--rv-accent) 25%, transparent); }
+.hist-stats { margin-left: auto; display: flex; gap: 8px; font-variant-numeric: tabular-nums; font-size: .85em; }
+.hist-stats .add { color: #7fd8a4; }
+.hist-stats .del { color: #f08a9a; }
+.hist-body { border-top: 1px solid var(--SmartThemeBorderColor); padding: 12px 14px; }
+.hist-diff { white-space: pre-wrap; word-break: break-word; font-family: var(--rv-chat-font, inherit); line-height: 1.6; max-height: 50vh; overflow: auto; }
+.hist-diff ins { text-decoration: none; background: rgba(90, 200, 140, .22); color: #b8f0cf; border-radius: 3px; padding: 0 1px; }
+.hist-diff del { background: rgba(240, 100, 120, .2); color: #f5b3be; border-radius: 3px; padding: 0 1px; text-decoration: line-through; text-decoration-color: rgba(240, 100, 120, .6); }
+.hist-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; flex-wrap: wrap; }

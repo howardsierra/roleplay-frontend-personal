@@ -10,6 +10,7 @@ import { el, icon, toast, confirmDialog, modal, escapeHtml, isMobile } from './u
 import { points, plainMessage, onPointsChanged } from './rv-ext/points.js';
 import { paintMessage } from './dialogue-colors.js';
 import { messageId } from './message-ids.js';
+import { recordEdit, hasHistory, showHistory } from './history.js';
 import { renderGenDetails, toggleGenDetails, showInspector, recordCapture, newRequestId, generationStats, connectionLabel, captureKey } from './inspector.js';
 
 const chatEl = () => document.getElementById('chat');
@@ -56,6 +57,7 @@ function messageTemplate(mes, id) {
                         <span class="name_text"></span>
                         <i class="mes_ghost fa-solid fa-ghost" title="Hidden from the AI"></i>
                         <small class="timestamp"></small>
+                        <button class="rv-edited hidden" data-act="history" title="See edit history"><i class="fa-solid fa-clock-rotate-left"></i> edited</button>
                     </div>
                 </div>
                 <div class="mes_buttons">
@@ -102,6 +104,7 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
     node.querySelector('.avatar img').src = avatarFor(mes);
     node.querySelector('.name_text').textContent = mes.name ?? '';
     node.querySelector('.timestamp').textContent = state.settings.appearance.showTimestamps ? formatTime(mes.send_date) : '';
+    node.querySelector('.rv-edited')?.classList.toggle('hidden', streaming || !hasHistory(mes));
 
     const depth = state.chat.length - 1 - id;
     const textEl = node.querySelector('.mes_text');
@@ -264,7 +267,9 @@ async function editMessage(id) {
     editor.value = mes.mes;
     const done = async save => {
         if (save) {
+            const before = mes.mes;
             mes.mes = applyRegex(editor.value, mes.is_user ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT, { isEdit: true });
+            recordEdit(mes, before, mes.mes, 'edit');
             syncSwipe(mes);
             await saveChat();
             await eventSource.emit(event_types.MESSAGE_EDITED, id);
@@ -311,6 +316,10 @@ async function deleteSwipe(id) {
     await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId: id, swipeId: removed });
 }
 
+function openHistory(id) {
+    return showHistory(id, { onRestore: mes => { syncSwipe(mes); updateMessageBlock(id); } });
+}
+
 async function moreMenu(id, anchor) {
     const mes = state.chat[id];
     const items = [
@@ -319,6 +328,7 @@ async function moreMenu(id, anchor) {
             updateMessageBlock(id);
             await saveChat();
         }],
+        hasHistory(mes) ? ['clock-rotate-left', 'Edit history', () => openHistory(id)] : null,
         ['code-branch', 'Branch from here', () => import('./characters.js').then(m => m.branchChat(id))],
         mes.is_user ? null : ['magnifying-glass-chart', 'Inspect prompt', () => showInspector({ mesKey: captureKey(messageId(state.chat[id]), state.chat[id]?.swipe_id), gen: state.chat[id]?.extra?.gen })],
         mes.swipes?.length > 1 ? ['delete-left', 'Delete this swipe', () => deleteSwipe(id)] : null,
@@ -405,6 +415,7 @@ export function bindChatEvents() {
                 toggleGenDetails();
                 chatEl().querySelectorAll('.mes').forEach(n => { const i = Number(n.getAttribute('mesid')); if (state.chat[i]?.extra?.gen) renderGenDetails(n, state.chat[i], i, {}); });
                 break;
+            case 'history': openHistory(id); break;
             case 'inspect': showInspector({ mesKey: captureKey(messageId(mes), mes.swipe_id), gen: mes.extra?.gen }); break;
             default: break;
         }
