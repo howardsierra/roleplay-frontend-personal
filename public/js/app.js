@@ -27,9 +27,10 @@ function coreActions() {
         ['user-pen', 'Write for me (impersonate)', () => generate('impersonate')],
         ['wand-magic-sparkles', 'Illustrate the scene', () => openImageStudio('scene')],
         ['image', 'Image studio', () => openImageStudio('free')],
+        ['clapperboard', 'Previously on… (recap)', () => import('./recap.js').then(m => m.showRecap({ force: true }))],
         ['comments', 'Chats', showChatList],
         ['square-plus', 'New chat', newChat],
-        ['scroll', 'Prompt preview', showPromptPreview],
+        ['magnifying-glass-chart', 'Prompt inspector', showPromptPreview],
         ['note-sticky', "Author's note", () => openSettings('advanced')],
         ['palette', 'Cast colors', openCastEditor],
     ];
@@ -242,6 +243,8 @@ async function boot() {
 
     // Start on the home screen; recent stories are one tap away there.
     bindHome();
+    import('./ambient.js').then(m => m.bindAmbient());
+    import('./recap.js').then(m => m.bindRecap());
     renderHome();
     document.body.classList.add('ready');
 

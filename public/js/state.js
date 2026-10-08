@@ -60,6 +60,11 @@ export const DEFAULT_SETTINGS = {
         aurora: true,
         showTimestamps: false,
         enterToSend: 'desktop',
+        genDetails: true, // "Show generation details" row under replies
+        genDetailsOpen: false,
+        ambient: true, // scene-reactive lighting
+        ambientIntensity: 0.5,
+        recap: true, // "Previously on…" when returning to a chat
     },
     extension_settings: {},
     extensions: { disabled: [] },

@@ -10,6 +10,8 @@ import { el, icon, toast, confirmDialog, modal, escapeHtml, isMobile } from './u
 import { points, plainMessage, onPointsChanged } from './rv-ext/points.js';
 import { paintMessage } from './dialogue-colors.js';
 import { messageId } from './message-ids.js';
+import { recordEdit, hasHistory, showHistory } from './history.js';
+import { renderGenDetails, toggleGenDetails, showInspector, recordCapture, newRequestId, generationStats, connectionLabel, captureKey } from './inspector.js';
 
 const chatEl = () => document.getElementById('chat');
 const textarea = () => document.getElementById('send_textarea');
@@ -55,6 +57,7 @@ function messageTemplate(mes, id) {
                         <span class="name_text"></span>
                         <i class="mes_ghost fa-solid fa-ghost" title="Hidden from the AI"></i>
                         <small class="timestamp"></small>
+                        <button class="rv-edited hidden" data-act="history" title="See edit history"><i class="fa-solid fa-clock-rotate-left"></i> edited</button>
                     </div>
                 </div>
                 <div class="mes_buttons">
@@ -101,6 +104,7 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
     node.querySelector('.avatar img').src = avatarFor(mes);
     node.querySelector('.name_text').textContent = mes.name ?? '';
     node.querySelector('.timestamp').textContent = state.settings.appearance.showTimestamps ? formatTime(mes.send_date) : '';
+    node.querySelector('.rv-edited')?.classList.toggle('hidden', streaming || !hasHistory(mes));
 
     const depth = state.chat.length - 1 - id;
     const textEl = node.querySelector('.mes_text');
@@ -142,6 +146,7 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
     }
 
     paintMessage(node, mes);
+    renderGenDetails(node, mes, id, { streaming });
     for (const hook of renderHooks) {
         try { hook(node, mes, id, { streaming }); } catch (err) { console.error('Render hook failed', err); }
     }
@@ -187,6 +192,7 @@ export function printMessages() {
     });
     root.append(frag);
     refreshSwipeControls();
+    window.dispatchEvent(new Event('rv:messages-printed'));
     scrollToBottom(true);
 }
 
@@ -262,7 +268,9 @@ async function editMessage(id) {
     editor.value = mes.mes;
     const done = async save => {
         if (save) {
+            const before = mes.mes;
             mes.mes = applyRegex(editor.value, mes.is_user ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT, { isEdit: true });
+            recordEdit(mes, before, mes.mes, 'edit');
             syncSwipe(mes);
             await saveChat();
             await eventSource.emit(event_types.MESSAGE_EDITED, id);
@@ -309,6 +317,10 @@ async function deleteSwipe(id) {
     await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId: id, swipeId: removed });
 }
 
+function openHistory(id) {
+    return showHistory(id, { onRestore: mes => { syncSwipe(mes); updateMessageBlock(id); } });
+}
+
 async function moreMenu(id, anchor) {
     const mes = state.chat[id];
     const items = [
@@ -317,8 +329,9 @@ async function moreMenu(id, anchor) {
             updateMessageBlock(id);
             await saveChat();
         }],
+        hasHistory(mes) ? ['clock-rotate-left', 'Edit history', () => openHistory(id)] : null,
         ['code-branch', 'Branch from here', () => import('./characters.js').then(m => m.branchChat(id))],
-        ['scroll', 'Prompt preview', () => showPromptPreview()],
+        mes.is_user ? null : ['magnifying-glass-chart', 'Inspect prompt', () => showInspector({ mesKey: captureKey(messageId(state.chat[id]), state.chat[id]?.swipe_id), gen: state.chat[id]?.extra?.gen })],
         mes.swipes?.length > 1 ? ['delete-left', 'Delete this swipe', () => deleteSwipe(id)] : null,
         ['trash-can', 'Delete message', async () => {
             if (await confirmDialog('Delete this message?', { okLabel: 'Delete', danger: true })) deleteMessage(id);
@@ -359,13 +372,7 @@ export function popMenu(anchor, items) {
 }
 
 export async function showPromptPreview() {
-    if (!state.character) return;
-    const { messages, breakdown, tokens } = await buildPrompt({ type: 'normal', dryRun: true });
-    const list = el('div', { class: 'prompt-preview' },
-        el('div', { class: 'pp-summary' }, `≈ ${tokens.toLocaleString()} tokens · ${messages.length} messages`),
-        el('div', { class: 'pp-breakdown' }, breakdown.map(b => el('div', { class: 'pp-row' }, el('span', {}, b.label), el('span', { class: 'dim' }, `${b.tokens}`)))),
-        messages.map(m => el('div', { class: `pp-msg role-${m.role}` }, el('div', { class: 'pp-role' }, m.role + (m.name ? ` · ${m.name}` : '')), el('pre', {}, m.content))));
-    modal({ title: 'Prompt preview', content: list, wide: true });
+    return showInspector();
 }
 
 export function bindChatEvents() {
@@ -405,6 +412,12 @@ export function bindChatEvents() {
             case 'edit': editMessage(id); break;
             case 'image': import('./imagegen.js').then(m => m.illustrateMessage(id)); break;
             case 'more': moreMenu(id, btn); break;
+            case 'gen-toggle':
+                toggleGenDetails();
+                chatEl().querySelectorAll('.mes').forEach(n => { const i = Number(n.getAttribute('mesid')); if (state.chat[i]?.extra?.gen) renderGenDetails(n, state.chat[i], i, {}); });
+                break;
+            case 'history': openHistory(id); break;
+            case 'inspect': showInspector({ mesKey: captureKey(messageId(mes), mes.swipe_id), gen: mes.extra?.gen }); break;
             default: break;
         }
     });
@@ -545,8 +558,15 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             else prefixText = target.mes;
         }
 
-        const { messages, prefill, extraParams } = await buildPrompt({ type, quietPrompt, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
-        const body = { ...connectionBody(), messages, params: { ...samplerParams(), ...extraParams } };
+        const built = await buildPrompt({ type, quietPrompt, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
+        const { messages, prefill, extraParams } = built;
+        const requestId = newRequestId();
+        const body = { ...connectionBody(), messages, params: { ...samplerParams(), ...extraParams }, requestId };
+        const capture = {
+            type, requestId, messages, labels: built.labels, breakdown: built.breakdown, tokens: built.tokens, lore: built.lore,
+            loreTotal: built.loreTotal, model: body.model, connection: connectionLabel(), body: { ...body, requestId: undefined },
+        };
+        if (type === 'quiet' || type === 'impersonate') recordCapture(capture);
 
         if (type === 'quiet' && !quietToLoud) {
             const res = await completion(body, { signal: controller.signal });
@@ -597,6 +617,8 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         target.gen_started = nowDate();
         const startedAt = Date.now();
         let reasoningEnd = 0;
+        let firstTextAt = 0;
+        let result = null;
 
         let text = '';
         let reasoning = '';
@@ -611,9 +633,10 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         const schedule = () => { if (!frame) frame = requestAnimationFrame(paint); };
 
         if (state.preset.samplers.stream !== false) {
-            await streamCompletion(body, {
+            result = await streamCompletion(body, {
                 signal: controller.signal,
                 onText: t => {
+                    if (!firstTextAt) firstTextAt = Date.now();
                     if (!reasoningEnd && reasoning) reasoningEnd = Date.now();
                     text += t;
                     eventSource.emitAndWait(event_types.STREAM_TOKEN_RECEIVED, text);
@@ -622,10 +645,11 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
                 onReasoning: r => { reasoning += r; schedule(); },
             });
         } else {
-            const res = await completion(body, { signal: controller.signal });
-            text = res.text || '';
-            reasoning = res.reasoning || '';
+            result = await completion(body, { signal: controller.signal });
+            text = result.text || '';
+            reasoning = result.reasoning || '';
         }
+        const endedAt = Date.now();
         if (frame) cancelAnimationFrame(frame);
         if (reasoning) {
             target.extra.reasoning = reasoning;
@@ -638,6 +662,10 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         if (!target.mes.trim() && type !== 'continue') target.mes = '';
         target.extra.api = state.settings.connection.provider;
         target.extra.model = state.settings.connection.model;
+        target.extra.gen = generationStats({
+            startedAt, firstTextAt, endedAt, usage: result?.usage, promptTokens: built.tokens, outputText: text, reasoningText: reasoning, requestId,
+        });
+        recordCapture({ ...capture, mesKey: captureKey(messageId(target), target.swipe_id) });
         target.gen_finished = nowDate();
         syncSwipe(target);
         updateMessageBlock(targetId, target);

@@ -113,7 +113,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     const push = (role, content, label) => {
         content = String(content ?? '');
         if (!content.trim()) return;
-        target.push({ role, content });
+        target.push({ role, content, __label: label });
         breakdown.push({ label, role, tokens: estimateTokens(content) });
     };
 
@@ -175,7 +175,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     // IN_PROMPT extension prompts sit right before the history.
     for (const [key, ep] of Object.entries(extensionPrompts)) {
         if (ep.position === extension_prompt_types.IN_PROMPT && ep.value) {
-            before.push({ role: ROLE_NAMES[ep.role] || 'system', content: substituteParams(ep.value) });
+            before.push({ role: ROLE_NAMES[ep.role] || 'system', content: substituteParams(ep.value), __label: `ext:${key}` });
             breakdown.push({ label: `ext:${key}`, role: 'system', tokens: estimateTokens(ep.value) });
         }
         if (ep.position === extension_prompt_types.IN_CHAT && ep.value) inChat.push({ content: substituteParams(ep.value), depth: ep.depth, role: ROLE_NAMES[ep.role] || 'system', label: `ext:${key}` });
@@ -223,12 +223,12 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     const sortedInjections = [...inChat].sort((a, b) => b.depth - a.depth);
     for (const inj of sortedInjections) {
         const at = Math.max(0, withInjections.length - inj.depth);
-        withInjections.splice(at, 0, { role: ['system', 'user', 'assistant'].includes(inj.role) ? inj.role : 'system', content: inj.content, injected: true });
+        withInjections.splice(at, 0, { role: ['system', 'user', 'assistant'].includes(inj.role) ? inj.role : 'system', content: inj.content, injected: true, __label: inj.label });
     }
 
     const historyBlock = [];
     const newChat = substituteParams(preset.behavior.newChatPrompt);
-    if (newChat.trim()) historyBlock.push({ role: 'system', content: newChat });
+    if (newChat.trim()) historyBlock.push({ role: 'system', content: newChat, __label: 'New chat prompt' });
     historyBlock.push(...withInjections.map(({ injected, ...m }) => m));
 
     // Type-specific tails.
@@ -283,6 +283,9 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     messages = messages.filter(m => String(m.content).trim() || m === messages.at(-1));
 
+    // Where each part came from, for the Prompt Inspector (hooks may rebuild the list, so also match by content).
+    const labelOf = m => m.__label || (m.__src ? `Chat message ${m.__src.index + 1}` : '');
+    const labelByContent = new Map(messages.map(m => [m.content, labelOf(m)]));
     // Reverie extension prompt hooks (rv.prompt.onBuild, Lumiverse interceptors). Hooks may add request params.
     const extraParams = {};
     for (const hook of points.promptHooks.list()) {
@@ -294,7 +297,9 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
         }
     }
 
-    // Internal annotations (like __src) never reach the provider.
+    // Internal annotations (like __src) never reach the provider; labels are kept aside for the inspector.
+    const labels = messages.map(m => labelOf(m) || labelByContent.get(m.content)
+        || (m.role === 'assistant' && m === messages.at(-1) && prefill.trim() && m.content === prefill ? 'Prefill' : 'Added by an extension'));
     messages = messages.map(m => Object.fromEntries(Object.entries(m).filter(([k]) => !k.startsWith('__'))));
 
     const eventData = { chat: messages, dryRun };
@@ -303,7 +308,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     const tokens = messages.reduce((n, m) => n + estimateTokens(m.content) + 4, 0);
     breakdown.push({ label: `Chat history (${kept.length} msgs${dropped ? `, ${dropped} trimmed` : ''})`, role: 'mixed', tokens: kept.reduce((n, m) => n + estimateTokens(m.content), 0) });
-    return { messages, breakdown, tokens, prefill, lore: lore.activated, extraParams };
+    return { messages, labels: messages.length === labels.length ? labels : [], breakdown, tokens, prefill, lore: lore.activated, loreTotal: lore.total ?? lore.activated.length, extraParams };
 }
 
 export function samplerParams() {

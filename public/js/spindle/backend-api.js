@@ -5,6 +5,7 @@ import { api, completion } from '../api.js';
 import { eventSource, event_types } from '../events.js';
 import { samplerParams } from '../prompt.js';
 import { substituteParams, variables } from '../macros.js';
+import { recordEdit } from '../history.js';
 import { addOneMessage, updateMessageBlock, printMessages, nowDate, generate, syncSwipe, refreshSwipeControls } from '../chat.js';
 import { toast, modal, confirmDialog, promptDialog, el } from '../ui.js';
 import { scanWorldInfo } from '../worldinfo.js';
@@ -87,6 +88,7 @@ const chatApi = {
         if (patch.swipe_id !== undefined && mes.swipes?.length) mes.swipe_id = Math.max(0, Math.min(mes.swipes.length - 1, Number(patch.swipe_id)));
         if (swipeTouched && mes.swipes?.length) mes.mes = mes.swipes[mes.swipe_id ?? 0];
         if (patch.content !== undefined) {
+            if (!swipeTouched) recordEdit(mes, mes.mes, String(patch.content), extName(_ext));
             mes.mes = String(patch.content);
             if (mes.swipes?.length) mes.swipes[mes.swipe_id ?? 0] = mes.mes;
         }
