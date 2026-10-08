@@ -18,13 +18,13 @@ It only does two things, **chat completion** and **image generation**, and it ca
 
 | | |
 |---|---|
-| 💬 Chat | Streaming, swipes (buttons, arrow keys or a horizontal swipe on touch screens), edit, continue, impersonate, branch, hide-from-AI, delete, chat list, author's note, collapsible "thinking" blocks for reasoning models |
+| 💬 Chat | Streaming, swipes (buttons, arrow keys or a horizontal swipe on touch screens), edit, continue, impersonate, branch, hide-from-AI, delete, chat list, author's note, collapsible "thinking" blocks for reasoning models, per-message edit history (word diff + restore), "Previously on…" recaps when you come back to a story |
 | 🎭 Characters | Gallery of portrait cards, editor with alternate greetings, PNG/JSON export, favourites, duplicate |
-| 🧠 Prompting | Block-based prompt manager with drag-to-reorder (touch too), token estimates, prompt preview, per-generation-type triggers, World Info with keywords / regex keys / recursion / groups / budget / @depth |
+| 🧠 Prompting | Block-based prompt manager with drag-to-reorder (touch too), token estimates, a Prompt / Context Inspector (prompt stack, lore activation, the exact provider request, raw JSON) and per-reply generation details (think/post time, tokens in/out), per-generation-type triggers, World Info with keywords / regex keys / recursion / groups / budget / @depth |
 | 🔌 Providers | OpenRouter, Anthropic (native, with prompt caching and extended thinking), OpenAI, Google AI Studio, DeepSeek, xAI, Mistral, NanoGPT, or any OpenAI-compatible URL (save as many custom endpoints as you like, each with its own URL and key). Connection profiles let you switch quickly. |
 | 🎨 Images | Pollinations (free, no key), OpenAI gpt-image / DALL·E, OpenRouter image models, Gemini / Imagen, NovelAI (V3/V4/V4.5), xAI, NanoGPT, A1111/Forge, ComfyUI (workflows). Illustrate any message, an image studio, a gallery, and **inline `<pic prompt="…">` tags** that the model can write and that are generated automatically. |
 | ✨ Rich replies | ```` ```html ```` blocks and full HTML documents become live sandboxed mini-apps. Loose `<script>` from regex "status panels" also works. ```` ```python ```` blocks run in the browser with Pyodide. |
-| 🖌️ Looks | 6 built-in themes, ST theme import, colour editor, 4 message styles (cards, bubbles, flat, novel), serif/sans fonts, background images per chat or global, animated aurora backdrop |
+| 🖌️ Looks | 6 built-in themes, ST theme import, colour editor, 4 message styles (cards, bubbles, flat, novel), serif/sans fonts, background images per chat or global, animated aurora backdrop, scene-reactive lighting that follows the story (candlelight, moonlight, storms, snow…) |
 
 ## Run it
 
@@ -137,6 +137,13 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 ## Dialogue colors
 
 **Settings → Look → Dialogue colors** colours each speaker's quotes, Smart Dialogue Colorizer–style (colour from the avatar, a fixed colour, or a per-character override, plus saturation/brightness boosts and coloured names). With **multiple speakers**, the AI tags each line with `<font color title="Name">`; known speakers are always repainted with their cast colour and new named speakers are learned into the chat's cast (✨ menu → **Cast colors**). Custom CSS can use `var(--character-color)`.
+
+## Story tools
+
+- **Generation details** — under each reply, *Show generation details* reveals how long the model thought, how long it wrote, and the tokens in/out (from the provider, or estimated with ≈). *Inspect* opens the **Prompt / Context Inspector** for that reply: every message in the prompt stack with where it came from (preset block, lore, chat message, extension) and a search, which lore entries fired, the exact body sent to the provider (captured on the server, never with headers or keys) and raw JSON, with *Copy stack* / *Copy payload*. ✨ menu → *Prompt inspector* shows a dry run of the next message.
+- **Edit history** — every edit keeps the previous text (per swipe, including changes made by extensions). The *edited* chip next to the name shows each version with a word diff; restoring keeps the current text too.
+- **Scene lighting** — the room's light shifts with the story. The toolbar chip shows the current scene; tap it to pin one or turn it off for that chat. Strength and on/off are in **Look**.
+- **Previously on…** — come back to a story after 6+ hours and a short recap of where things stand appears under the last message (written once and cached). ✨ menu → *Previously on…* writes one any time.
 
 ## Reverie extensions, presets and themes
 

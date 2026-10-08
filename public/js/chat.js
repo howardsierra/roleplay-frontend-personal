@@ -192,6 +192,7 @@ export function printMessages() {
     });
     root.append(frag);
     refreshSwipeControls();
+    window.dispatchEvent(new Event('rv:messages-printed'));
     scrollToBottom(true);
 }
 
