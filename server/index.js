@@ -149,11 +149,14 @@ const vendor = {
     'showdown.js': 'showdown/dist/showdown.min.js',
     'popper.js': '@popperjs/core/dist/umd/popper.min.js',
     'fuse.js': 'fuse.js/dist/fuse.min.mjs',
+    'jszip.js': 'jszip/dist/jszip.min.js',
 };
 for (const [name, rel] of Object.entries(vendor)) {
     const file = path.join(ROOT, 'node_modules', rel);
     app.get(`/vendor/${name}`, (_req, res) => res.sendFile(file, { maxAge: '7d' }));
 }
+// SillyTavern serves JSZip at /lib/jszip.min.js; extensions load it from there.
+app.get('/lib/jszip.min.js', (_req, res) => res.sendFile(path.join(ROOT, 'node_modules/jszip/dist/jszip.min.js'), { maxAge: '7d' }));
 app.use('/vendor/fontawesome', express.static(path.join(ROOT, 'node_modules/@fortawesome/fontawesome-free'), { maxAge: '30d' }));
 app.use(extensionsServe);
 app.use(spindleServe);

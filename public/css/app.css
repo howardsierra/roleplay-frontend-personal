@@ -455,7 +455,7 @@ body:not(.generating) #chat:has(.last_mes:not(.user_mes)) ~ #form_sheld #btn-con
     box-shadow: 0 30px 70px -20px rgba(0, 0, 0, .85);
 }
 #extensionsMenu { bottom: calc(100% - 2px); left: 12px; animation: pop .22s var(--rv-ease); transform-origin: bottom left; }
-.ctx-menu { position: fixed; z-index: 1500; opacity: 0; transform: scale(.96); transition: opacity .15s, transform .15s; }
+.ctx-menu { position: fixed; z-index: 3500; opacity: 0; transform: scale(.96); transition: opacity .15s, transform .15s; }
 .ctx-menu.open { opacity: 1; transform: none; }
 @keyframes pop { from { opacity: 0; transform: scale(.95) translateY(6px); } }
 .menu-section:empty { display: none; }
@@ -676,7 +676,7 @@ select.input option { background: var(--rv-bg); color: var(--SmartThemeBodyColor
 .bg-tile:hover .bg-del { opacity: 1; }
 
 /* =========================== modal =========================== */
-.modal-wrap { position: fixed; inset: 0; z-index: 1000; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 16px; background: rgba(0, 0, 0, 0); transition: background .25s; }
+.modal-wrap { position: fixed; inset: 0; z-index: 3100; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 16px; background: rgba(0, 0, 0, 0); transition: background .25s; }
 .modal-wrap.open { background: rgba(0, 0, 0, .5); backdrop-filter: blur(3px); }
 .modal {
     width: min(560px, 100%); max-height: min(88vh, calc(var(--vvh) - 32px)); display: flex; flex-direction: column;
@@ -737,7 +737,7 @@ select.input option { background: var(--rv-bg); color: var(--SmartThemeBodyColor
 .gallery-item:hover figcaption { opacity: 1; }
 
 /* =========================== toasts =========================== */
-.toast-container { position: fixed; z-index: 2000; top: calc(var(--safe-top) + 64px); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; width: min(420px, calc(100vw - 24px)); pointer-events: none; }
+.toast-container { position: fixed; z-index: 3600; top: calc(var(--safe-top) + 64px); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; width: min(420px, calc(100vw - 24px)); pointer-events: none; }
 .toast {
     pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; border-radius: 16px; font-size: .88em;
     background: var(--SmartThemeBlurTintColor); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
@@ -1268,7 +1268,11 @@ body.no-character.sheet-docked #app { margin-right: 0 !important; }
 /* Floating extension buttons step aside while a popup or a phone drawer is open. */
 body:has(#modal-root .modal-wrap) .ts-widget-root,
 body:has(#modal-root .modal-wrap) .lv-float-box:not(.fullscreen),
-body:has(#modal-root .modal-wrap) [data-rv-lifted] { visibility: hidden !important; }
+body:has(#modal-root .modal-wrap) [data-rv-lifted],
+body:has(#pm_modal:not(.pm_hidden)) .ts-widget-root,
+body:has(#pm_modal:not(.pm_hidden)) .lv-float-box:not(.fullscreen),
+body:has(#pm_modal:not(.pm_hidden)) .lv-dock-tabs,
+body:has(#pm_modal:not(.pm_hidden)) [data-rv-lifted] { visibility: hidden !important; }
 @media (max-width: 760px) {
     body:has(.drawer.open) .ts-widget-root,
     body:has(.drawer.open) .lv-float-box:not(.fullscreen),
@@ -1416,3 +1420,27 @@ body.no-character #rv-ambient, body.no-character #rv-ambient-fx { opacity: 0; }
 .rv-recap-shimmer { display: block; height: .9em; border-radius: 6px; background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.14), rgba(255,255,255,.05)); background-size: 200% 100%; animation: rv-shimmer 1.4s linear infinite; }
 .rv-recap-shimmer.short { width: 62%; }
 @keyframes rv-shimmer { to { background-position: -200% 0; } }
+
+/* ---------------------------------------------------------------- persona manager (native port) */
+/* While it's open, floating extension widgets attached to <body> step aside. */
+body:has(> #pm_modal:not(.pm_hidden)) > :not(#bg_layer, #app, #left-nav-panel, #sheet-panel, #right-nav-panel, #scrim, #toast-container, #modal-root, #pm_modal, #rv-ambient, .modal-wrap, .ctx-menu, script, template, style, link) { visibility: hidden !important; }
+#pm_modal .pm_panel { backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 16px)) saturate(140%); -webkit-backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 16px)) saturate(140%); }
+#pm_modal .pm_backdrop { backdrop-filter: blur(3px); }
+.persona-manager-settings .pm_settings_card { margin-top: 0; }
+
+/* ---------------------------------------------------------------- avatar banner (native port) */
+.ab-controls { display: flex; flex-direction: column; gap: 10px; }
+.ab-preview { aspect-ratio: 4 / 1; border-radius: 12px; background-size: cover; background-position: center; border: 1px solid var(--SmartThemeBorderColor); box-shadow: inset 0 -30px 40px -30px rgba(0,0,0,.6); }
+.ab-preview.empty { display: grid; place-content: center; justify-items: center; gap: 4px; color: var(--rv-text-dim); background: var(--rv-surface); font-size: .85em; }
+.ab-preview.empty i { font-size: 1.6em; opacity: .6; }
+.ab-color { display: inline-flex; align-items: center; gap: 8px; font-size: .88em; }
+.ab-color input[type="color"] { width: 34px; height: 26px; padding: 0; border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; background: none; cursor: pointer; }
+.ab-crop { display: flex; flex-direction: column; gap: 12px; }
+.ab-crop-frame { position: relative; width: 100%; overflow: hidden; border-radius: 12px; background: #000; cursor: grab; touch-action: none; user-select: none; box-shadow: 0 0 0 1px var(--SmartThemeBorderColor); }
+.ab-crop-frame:active { cursor: grabbing; }
+.ab-crop-img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; pointer-events: none; }
+.ab-crop-row { display: flex; align-items: center; gap: 10px; color: var(--rv-text-dim); }
+.ab-crop-zoom { flex: 1; }
+.ab-crop .hint { margin: 0; }
+#pm_banner_field .btn.small { font-size: .8em; }
+body.has-panel-banner .sheet-panel #sheet-body { overflow-x: hidden; }

@@ -118,6 +118,9 @@ async function activeBooks() {
     const linked = state.character?.card?.data?.extensions?.world;
     if (linked) for (const w of list) if (w.name === linked) ids.add(w.id);
     for (const w of list) if ((state.chatMeta?.chat_metadata?.world_info || null) === w.name) ids.add(w.id);
+    // The persona's lorebook (SillyTavern's persona_description_lorebook).
+    const personaBook = (state.settings.personas || []).find(p => p.id === state.settings.personaId)?.st?.lorebook;
+    if (personaBook) for (const w of list) if (w.name === personaBook) ids.add(w.id);
     for (const id of ids) {
         try { books.push(await loadWorld(id)); } catch { /* deleted */ }
     }

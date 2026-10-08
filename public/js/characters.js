@@ -1,4 +1,5 @@
 // Character library, editor, and chat management.
+import { bannerControls, KEY as BANNER_KEY } from './avatar-banner.js';
 import { api } from './api.js';
 import { state, saveSettingsDebounced, saveChat, userName, charName } from './state.js';
 import { eventSource, event_types } from './events.js';
@@ -333,6 +334,9 @@ export async function editCharacter(id, { isNew = false } = {}) {
             field('Post-history instructions', textArea(d.post_history_instructions, v => { d.post_history_instructions = v; }, { rows: 6 }), 'Replaces the preset post-history instructions. {{original}} works here too.'),
             field('Linked lorebook (name)', textInput(d.extensions?.world || '', v => { d.extensions = { ...(d.extensions || {}), world: v }; })),
             field('Character version', textInput(d.character_version, v => { d.character_version = v; }))),
+        Banner: el('div', { class: 'stack' },
+            el('p', { class: 'hint' }, 'A strip of art across the top of this character\'s messages (Avatar Banner). Changes save right away.'),
+            bannerControls({ kind: 'character', id, onChange: data => { d.extensions = { ...(d.extensions || {}), [BANNER_KEY]: data }; } })),
     };
     const tabBar = el('div', { class: 'tabs inline' });
     const body = el('div', { class: 'editor-body' });

@@ -14,11 +14,12 @@ import { api } from '../api.js';
 import { toastr, modal, el, escapeHtml, debounce, isMobile, toast } from '../ui.js';
 import DOMPurify from '../../vendor/purify.js';
 import {
-    ConnectionManagerRequestService, ChatCompletionService, TextCompletionService, personaMaps, getUserAvatar, getUserAvatars,
+    ConnectionManagerRequestService, ChatCompletionService, TextCompletionService, getUserAvatar, getUserAvatars,
     setUserAvatar, setPersonaDescription, getThumbnailUrl, getPastCharacterChats, sendMessageAsUser, extractTextFromHTML, escapeRegex,
     regexFromString, isDataURL, trimToStartSentence, bufferToBase64, saveBase64AsFile, isFirefox, currentUserAvatar,
 } from './apis.js';
 import { dragElement } from './dom.js';
+import { definePersonaFields, isPersonaLocked, togglePersonaLock, convertCharacterToPersona } from '../personas.js';
 export { installStDom } from './dom.js';
 
 // ---------------------------------------------------------------------------
@@ -44,11 +45,19 @@ export class Popup {
         else if (this.content && typeof this.content === 'object' && this.content.jquery) body.append(...this.content.toArray());
         else body.innerHTML = String(this.content ?? '');
         let input = null;
+        // Extra fields: { id, label, type: 'text' | 'checkbox', defaultState, tooltip } → this.inputResults
+        const customInputs = (this.options.customInputs || []).map(ci => {
+            const box = ci.type === 'checkbox'
+                ? el('input', { type: 'checkbox', checked: !!ci.defaultState })
+                : el('input', { class: 'input', type: 'text', value: ci.defaultState ?? '' });
+            return { ci, box, row: el('label', { class: ci.type === 'checkbox' ? 'toggle-row' : 'field', title: ci.tooltip || '' }, ci.type === 'checkbox' ? [box, el('span', {}, ci.label || '')] : [el('span', { class: 'field-label' }, ci.label || ''), box]) };
+        });
         if (this.type === POPUP_TYPE.INPUT) {
             input = el(this.options.rows > 1 ? 'textarea' : 'input', { class: 'input', rows: this.options.rows || 1 });
             input.value = this.inputValue ?? '';
             body.append(input);
         }
+        for (const c of customInputs) body.append(c.row);
         const ok = this.options.okButton === false ? null : (typeof this.options.okButton === 'string' ? this.options.okButton : 'OK');
         const cancel = this.type === POPUP_TYPE.TEXT || this.type === POPUP_TYPE.DISPLAY
             ? null
@@ -64,6 +73,7 @@ export class Popup {
         await this.options.onOpen?.(this);
         const result = await modal({ content: body, buttons, wide: !!(this.options.wide || this.options.large), title: this.options.title || '' });
         this.result = result ?? POPUP_RESULT.CANCELLED;
+        this.inputResults = new Map(customInputs.map(c => [c.ci.id, c.ci.type === 'checkbox' ? c.box.checked : c.box.value]));
         if (this.type === POPUP_TYPE.INPUT) this.value = this.result === POPUP_RESULT.AFFIRMATIVE ? input.value : (this.result === POPUP_RESULT.NEGATIVE ? false : null);
         else this.value = this.result;
         await this.options.onClose?.(this);
@@ -664,9 +674,9 @@ function presetAsOai() {
 /** Persistent power_user object (extensions mutate it and then call saveSettingsDebounced). */
 function powerUser() {
     const pu = (state.settings.power_user ??= {});
-    Object.assign(pu, personaMaps(), {
+    if (!Object.getOwnPropertyDescriptor(pu, 'personas')?.get) definePersonaFields(pu);
+    Object.assign(pu, {
         user_avatar: currentUserAvatar(),
-        persona_description: currentPersona().description,
         custom_css: state.settings.appearance.customCss,
         chat_display: state.settings.appearance.chatStyle,
         prefer_character_prompt: state.settings.generation.preferCharPrompt,
@@ -742,8 +752,8 @@ const live = () => {
         // lib.js
         ...libs(), tags: [], tag_map: {}, groups: [], selected_group: null, is_group_generating: false,
         // personas.js
-        getUserAvatar, getUserAvatars, setUserAvatar, setPersonaDescription, isPersonaLocked: () => false, togglePersonaLock: async () => {},
-        convertCharacterToPersona: async () => {}, setUserName: async () => {},
+        getUserAvatar, getUserAvatars, setUserAvatar, setPersonaDescription, isPersonaLocked, togglePersonaLock,
+        convertCharacterToPersona, setUserName: async () => {},
         // misc script.js / utils.js / others
         getPastCharacterChats, sendMessageAsUser, showSwipeButtons: () => {}, hideSwipeButtons: () => {}, setSendButtonState: () => {},
         setExternalAbortController: () => {}, reloadMarkdownProcessor: () => {}, extractMessageBias: () => '',

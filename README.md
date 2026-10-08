@@ -145,6 +145,21 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 - **Scene lighting** — the room's light shifts with the story. The toolbar chip shows the current scene; tap it to pin one or turn it off for that chat. Strength and on/off are in **Look**.
 - **Previously on…** — come back to a story after 6+ hours and a short recap of where things stand appears under the last message (written once and cached). ✨ menu → *Previously on…* writes one any time.
 
+## Personas and avatar banners
+
+Two SillyTavern extensions are built in, ported from their own code, and they read the data those extensions saved. Their SillyTavern copies are skipped automatically.
+
+- **Persona Manager** (by aceenvw): the 🧑‍🚀 top-bar button (or *Personas* in the sidebar) opens it. You get:
+  - Card grid with search, sort, quick filters, folders and favourites.
+  - Bulk select and the active-persona spotlight.
+  - Full editor: title, description with a token count, position, depth and role, character / chat / default locks, lorebook, private notes, and a banner.
+  - ZIP backup and restore (works with SillyTavern's backups too), convert a character into a persona, and themes.
+  - Persona locks apply when a chat opens: chat lock, then character, then default. The description can sit in the prompt, at the top or bottom of the Author's Note, or at a depth. The persona's lorebook joins the active lore.
+- **Avatar Banner** (by Kaede): a 4:1 strip of art across the top of a character's (or persona's) messages, with the name in a display font with an accent glow, and per-character accent and quote colours.
+  - Set banners in the character editor (*Banner* tab) or the Persona Manager editor. Crop from the avatar or upload an image.
+  - Global options are in **Look → Avatar banners**, including the character-panel banner.
+  - Cards that already carry banners from SillyTavern show them.
+
 ## Reverie extensions, presets and themes
 
 Reverie also has its own formats that go beyond what SillyTavern's can do. See [docs/EXTENSIONS.md](docs/EXTENSIONS.md) for the details.

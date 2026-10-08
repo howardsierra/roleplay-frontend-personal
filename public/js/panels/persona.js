@@ -1,3 +1,4 @@
+import { bannerControls } from '../avatar-banner.js';
 import { api } from '../api.js';
 import { state, saveSettingsDebounced } from '../state.js';
 import { eventSource, event_types } from '../events.js';
@@ -52,6 +53,7 @@ export async function render(body) {
                 } }, img, el('span', { class: 'editor-avatar-hint' }, icon('camera'))),
                 el('div', { class: 'stack grow' }, field('Name', textInput(p.name, v => { p.name = v; saveSettingsDebounced(); renderListDebounced(); })))),
             field('Description', textArea(p.description, v => { p.description = v; saveSettingsDebounced(); }, { rows: 8, placeholder: 'Who are you in this story? Appearance, personality, background…' }), 'Inserted where the preset has the “Persona Description” marker ({{persona}}).'),
+            el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Banner'), bannerControls({ kind: 'persona', id: p.id })),
             s.personas.length > 1 ? el('button', { class: 'btn small danger', onclick: async () => {
                 if (!await confirmDialog(`Delete persona “${p.name}”?`, { okLabel: 'Delete', danger: true })) return;
                 s.personas = s.personas.filter(x => x.id !== p.id);
@@ -78,7 +80,9 @@ export async function render(body) {
             toast(err.message, 'error', { title: 'Persona import failed' });
         }
     } }, icon('file-import'), 'Import from SillyTavern');
-    body.append(section('Who you are', list), section('', editor),
+    const pmBox = el('div', { class: 'persona-manager-settings' });
+    import('../persona-manager/index.js').then(m => m.mountSettings(pmBox));
+    body.append(section('Persona Manager', pmBox), section('Who you are', list), section('', editor),
         section('Import', el('div', { class: 'row gap wrap' }, importBtn),
             el('p', { class: 'hint' }, 'Pick your SillyTavern persona backup (Persona Management → Backup, a personas_….json) or its settings.json. Select your avatar images from SillyTavern\'s “User Avatars” folder at the same time and they\'re matched by file name.')));
 }
