@@ -95,24 +95,11 @@ export const TextCompletionService = {
 // ---------------------------------------------------------------------------
 // Personas, in SillyTavern's shape (avatar id → name / description)
 // ---------------------------------------------------------------------------
-export function personaMaps() {
-    const personas = {};
-    const persona_descriptions = {};
-    for (const p of state.settings.personas || []) {
-        personas[p.id] = p.name;
-        persona_descriptions[p.id] = { description: p.description || '', position: 0, depth: 2, role: 0, title: p.title || '', lorebook: '', connections: [] };
-    }
-    return { personas, persona_descriptions, default_persona: state.settings.personas?.[0]?.id ?? null };
-}
-
 export const getUserAvatars = async () => (state.settings.personas || []).map(p => p.id);
 export const getUserAvatar = id => (state.settings.personas || []).find(p => p.id === id)?.avatar || 'icons/user.svg';
 export async function setUserAvatar(id) {
-    if (!(state.settings.personas || []).some(p => p.id === id)) return;
-    state.settings.personaId = id;
-    saveSettingsDebounced();
-    await eventSource.emit(event_types.PERSONA_CHANGED, id);
-    await eventSource.emit(event_types.SETTINGS_UPDATED);
+    const { setActivePersona } = await import('../personas.js');
+    if (await setActivePersona(id)) await eventSource.emit(event_types.SETTINGS_UPDATED);
 }
 export function setPersonaDescription(text) {
     const p = (state.settings.personas || []).find(x => x.id === state.settings.personaId);

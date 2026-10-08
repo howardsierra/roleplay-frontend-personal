@@ -70,7 +70,7 @@ export function modal({ title = '', content = '', buttons = [{ label: 'Close', v
         if (content instanceof Node) body.append(content);
         else body.innerHTML = content;
         const footer = el('div', { class: 'modal-footer' });
-        const wrap = el('div', { class: `modal-wrap ${className}`, style: { zIndex: 1000 + modalDepth * 10 } });
+        const wrap = el('div', { class: `modal-wrap ${className}`, style: { zIndex: 3100 + modalDepth * 10 } });
         const box = el('div', { class: `modal ${wide ? 'wide' : ''}`, role: 'dialog', 'aria-modal': 'true' },
             title ? el('div', { class: 'modal-head' }, el('h3', {}, title), el('button', { class: 'icon-btn', title: 'Close', onclick: () => close(null) }, icon('xmark'))) : null,
             body, buttons.length ? footer : null);

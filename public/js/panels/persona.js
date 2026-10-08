@@ -78,7 +78,9 @@ export async function render(body) {
             toast(err.message, 'error', { title: 'Persona import failed' });
         }
     } }, icon('file-import'), 'Import from SillyTavern');
-    body.append(section('Who you are', list), section('', editor),
+    const pmBox = el('div', { class: 'persona-manager-settings' });
+    import('../persona-manager/index.js').then(m => m.mountSettings(pmBox));
+    body.append(section('Persona Manager', pmBox), section('Who you are', list), section('', editor),
         section('Import', el('div', { class: 'row gap wrap' }, importBtn),
             el('p', { class: 'hint' }, 'Pick your SillyTavern persona backup (Persona Management → Backup, a personas_….json) or its settings.json. Select your avatar images from SillyTavern\'s “User Avatars” folder at the same time and they\'re matched by file name.')));
 }

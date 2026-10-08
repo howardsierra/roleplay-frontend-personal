@@ -105,7 +105,10 @@ function bindUi() {
         if (action === 'create-character') createCharacter();
         if (action === 'new-story') newStory();
         if (action === 'gallery') { closeAllDrawers(); openGallery(); }
-        if (action === 'open-settings') openSettings(target.dataset.tab);
+        if (action === 'open-settings' && target.dataset.tab === 'persona' && state.settings.extension_settings?.aevPersonaManager?.hijackDrawer !== false) {
+            closeAllDrawers();
+            import('./persona-manager/index.js').then(m => m.openManager());
+        } else if (action === 'open-settings') openSettings(target.dataset.tab);
     });
     $id('char-search').addEventListener('input', renderLibrary);
 
@@ -245,6 +248,13 @@ async function boot() {
     bindHome();
     import('./ambient.js').then(m => m.bindAmbient());
     import('./recap.js').then(m => m.bindRecap());
+    import('./personas.js').then(m => m.bindPersonas());
+    import('./persona-manager/index.js').then(m => m.initPersonaManager());
+    $id('btn-persona').addEventListener('click', () => {
+        closeAllDrawers();
+        if (state.settings.extension_settings?.aevPersonaManager?.hijackDrawer === false) openSettings('persona');
+        else import('./persona-manager/index.js').then(m => m.openManager());
+    });
     renderHome();
     document.body.classList.add('ready');
 

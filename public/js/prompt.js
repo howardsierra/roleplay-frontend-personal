@@ -1,4 +1,5 @@
 // Builds the chat-completion message list from the active preset, character, persona, lore and chat.
+import { placement, PERSONA_POSITION } from './personas.js';
 import { messageId } from './message-ids.js';
 import { state, currentPersona, charName, userName, chatMetadata } from './state.js';
 import { substituteParams, readVariable, variables } from './macros.js';
@@ -122,6 +123,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
         if (ep.position === extension_prompt_types.BEFORE_PROMPT && ep.value) push(ROLE_NAMES[ep.role] || 'system', substituteParams(ep.value), `ext:${key}`);
     }
 
+    const personaPlacement = placement();
     const condCtx = conditionContext(type, history);
     for (const block of preset.blocks) {
         if (!block.enabled || !blockTriggered(block, type) || !tagTriggered(block) || !conditionMet(block, condCtx)) continue;
@@ -143,7 +145,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
                 content = scenario ? substituteParams(preset.formats.scenarioFormat || '{{scenario}}', { scenario }) : '';
                 break;
             }
-            case 'persona_description': content = substituteParams(currentPersona().description); break;
+            case 'persona_description': content = personaPlacement.position === PERSONA_POSITION.IN_PROMPT ? substituteParams(currentPersona().description) : ''; break;
             case 'dialogue_examples':
                 for (const ex of exampleMessages(preset)) push(ex.role, ex.content, 'Example dialogue');
                 continue;
@@ -182,10 +184,16 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     }
     for (const d of lore.depth) inChat.push({ ...d, label: 'World Info @ depth' });
 
-    // Author's note (per chat), ST-style at depth.
-    const an = chatMetadata().note_prompt;
-    if (an?.trim()) {
-        inChat.push({ content: substituteParams(an), depth: Number(chatMetadata().note_depth ?? 4), role: ROLE_NAMES[Number(chatMetadata().note_role ?? 0)] || 'system', label: "Author's Note" });
+    // Author's note (per chat), ST-style at depth. The persona description can sit at its top or bottom.
+    let an = substituteParams(chatMetadata().note_prompt || '');
+    const personaText = substituteParams(currentPersona().description || '');
+    if (personaText.trim() && personaPlacement.position === PERSONA_POSITION.AN_TOP) an = an.trim() ? `${personaText}\n${an}` : personaText;
+    if (personaText.trim() && personaPlacement.position === PERSONA_POSITION.AN_BOTTOM) an = an.trim() ? `${an}\n${personaText}` : personaText;
+    if (an.trim()) {
+        inChat.push({ content: an, depth: Number(chatMetadata().note_depth ?? 4), role: ROLE_NAMES[Number(chatMetadata().note_role ?? 0)] || 'system', label: "Author's Note" });
+    }
+    if (personaText.trim() && personaPlacement.position === PERSONA_POSITION.AT_DEPTH) {
+        inChat.push({ content: personaText, depth: personaPlacement.depth, role: ['system', 'user', 'assistant'][personaPlacement.role] || 'system', label: 'Persona Description @ depth' });
     }
 
     // ----- history -----

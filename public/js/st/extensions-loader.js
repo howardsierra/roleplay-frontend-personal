@@ -12,6 +12,14 @@ export const UI_RESKINS = {
     'SillyTavern-MoonlitEchoesTheme': 'Moonlit Echoes reskins SillyTavern\'s own interface, so it needs the SillyTavern classic layout.',
 };
 const reskinReason = ext => UI_RESKINS[ext.name] || null;
+
+// Extensions Reverie has built in (ported natively, reading the same saved data). Their SillyTavern
+// copies would fight the native versions, so they're skipped unless the user forces them on.
+export const BUILT_IN = [
+    { test: ext => /avatar.?banner/i.test(ext.name) || /^avatar banner$/i.test(ext.manifest?.display_name || ''), reason: 'Avatar Banner is built into Reverie (Settings → Look → Avatar banners).' },
+    { test: ext => /persona.?manager/i.test(ext.name) || /persona manager/i.test(ext.manifest?.display_name || ''), reason: 'Persona Manager is built into Reverie (sidebar → Personas).' },
+];
+export const builtInReason = ext => BUILT_IN.find(b => b.test(ext))?.reason || null;
 const interceptors = [];
 
 export function getInterceptors() {
@@ -34,6 +42,11 @@ export async function loadExtensions() {
     const forced = new Set(state.settings.extensions.forceLoad || []);
     for (const ext of list) {
         if (ext.type === 'reverie' || ext.type === 'lumiverse' || disabled.has(ext.name)) continue;
+        const native = builtInReason(ext);
+        if (native && !forced.has(ext.name)) {
+            loaded.set(ext.name, { manifest: ext.manifest, skipped: native });
+            continue;
+        }
         const reason = reskinReason(ext);
         // Interface reskins load automatically in the classic (SillyTavern-shaped) layout.
         if (reason && state.settings.appearance.layout !== 'classic' && !forced.has(ext.name)) {

@@ -78,7 +78,7 @@ renderHooks.add((_node, mes) => {
 });
 
 // ---------------------------------------------------------------- UI primitives
-let zTop = 1400;
+let zTop = 3150;
 
 function makeModal({ title = '', width = 420, maxHeight = 520, persistent = false } = {}, track) {
     const dismissers = new Set();
