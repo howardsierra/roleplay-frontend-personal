@@ -242,6 +242,7 @@ async function boot() {
 
     // Start on the home screen; recent stories are one tap away there.
     bindHome();
+    import('./ambient.js').then(m => m.bindAmbient());
     renderHome();
     document.body.classList.add('ready');
 
