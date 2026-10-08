@@ -1,3 +1,4 @@
+import { bannerSettingsSection } from '../avatar-banner.js';
 import { api } from '../api.js';
 import { state, saveSettingsDebounced, chatMetadata, saveChat } from '../state.js';
 import { BUILTIN_THEMES, applyTheme, importTheme, exportTheme, currentTheme, isReverieTheme, resolveReverieTheme, toReverieTheme, reverieToSillyTavern, prefersLight } from '../themes.js';
@@ -169,6 +170,7 @@ export async function render(body) {
             toggle('Show generation details under replies', a.genDetails !== false, v => { a.genDetails = v; saveSettingsDebounced(); printMessages(); }),
             field('Enter key', select([['desktop', 'Sends on desktop, new line on phone'], ['always', 'Always sends'], ['never', 'Never sends (use the button)']], a.enterToSend, v => { a.enterToSend = v; saveSettingsDebounced(); }))),
         dialogueSection(rerender),
+        bannerSettingsSection({ section, toggle, slider, field, textInput }),
         section('Colours', colorsBox,
             slider('Panel blur', editing.blur_strength ?? 14, { min: 0, max: 40, step: 1, onChange: v => { editing.blur_strength = v; a.theme = editing; save(); } })),
         await backgroundSection(a, save),

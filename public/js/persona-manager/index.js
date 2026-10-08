@@ -29,6 +29,7 @@ import {
     deleteAvatar,
     ensurePersona,
 } from './st.js';
+import { bannerControls } from '../avatar-banner.js';
 
 const MODULE_SETTINGS_KEY = 'aevPersonaManager';
 
@@ -1731,6 +1732,11 @@ function renderEditor() {
     });
 
     renderConnectionList(obj);
+    // Reverie: Avatar Banner controls for this persona.
+    if (state.dom.bannerField && state.dom.bannerField.dataset.for !== id) {
+        state.dom.bannerField.dataset.for = id;
+        state.dom.bannerField.replaceChildren(bannerControls({ kind: 'persona', id }));
+    }
     updateTokenCount(obj.description || '');
     setSaveStatus(state.saveStatus);
 }
@@ -2272,6 +2278,7 @@ async function createManagerDom() {
         opDefault: modal.querySelector('#pm_op_default'),
         opDelete: modal.querySelector('#pm_op_delete'),
         imageInput: modal.querySelector('#pm_image_input'),
+        bannerField: modal.querySelector('#pm_banner_field'),
     };
 
     applyTheme();

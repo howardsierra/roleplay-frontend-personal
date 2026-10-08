@@ -249,6 +249,7 @@ async function boot() {
     import('./ambient.js').then(m => m.bindAmbient());
     import('./recap.js').then(m => m.bindRecap());
     import('./personas.js').then(m => m.bindPersonas());
+    import('./avatar-banner.js').then(m => m.bindAvatarBanner());
     import('./persona-manager/index.js').then(m => m.initPersonaManager());
     $id('btn-persona').addEventListener('click', () => {
         closeAllDrawers();
