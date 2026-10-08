@@ -29,7 +29,7 @@ function coreActions() {
         ['image', 'Image studio', () => openImageStudio('free')],
         ['comments', 'Chats', showChatList],
         ['square-plus', 'New chat', newChat],
-        ['scroll', 'Prompt preview', showPromptPreview],
+        ['magnifying-glass-chart', 'Prompt inspector', showPromptPreview],
         ['note-sticky', "Author's note", () => openSettings('advanced')],
         ['palette', 'Cast colors', openCastEditor],
     ];

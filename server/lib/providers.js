@@ -129,9 +129,10 @@ function buildOpenAIBody(provider, model, messages, p, stream) {
     return body;
 }
 
-async function chatOpenAI({ provider, baseUrl, key, model, messages, params, stream, signal, onText, onReasoning }) {
+async function chatOpenAI({ provider, baseUrl, key, model, messages, params, stream, signal, onText, onReasoning, onRequest }) {
     const base = resolveBase(provider, baseUrl);
     const body = { ...buildOpenAIBody(provider, model, messages, params, stream), ...(params.custom_body || {}) };
+    onRequest?.({ url: `${base}/chat/completions`, body });
     const res = await fetch(`${base}/chat/completions`, {
         method: 'POST', headers: openaiHeaders(provider, key), body: JSON.stringify(body), signal,
     });
@@ -206,7 +207,7 @@ export function toAnthropic(messages, { cacheSystem = true } = {}) {
     return { system: systemBlocks, messages: out.filter(m => m.content !== '' || m === out.at(-1)) };
 }
 
-async function chatAnthropic({ baseUrl, key, model, messages, params: p, stream, signal, onText, onReasoning }) {
+async function chatAnthropic({ baseUrl, key, model, messages, params: p, stream, signal, onText, onReasoning, onRequest }) {
     const base = resolveBase('anthropic', baseUrl);
     const converted = toAnthropic(messages, { cacheSystem: p.cache_system !== false });
     // A trailing assistant message acts as a prefill; Claude rejects trailing whitespace there.
@@ -239,6 +240,7 @@ async function chatAnthropic({ baseUrl, key, model, messages, params: p, stream,
     if (Array.isArray(p.stop) && p.stop.length) body.stop_sequences = p.stop.filter(s => s.trim());
     Object.assign(body, p.custom_body || {});
 
+    onRequest?.({ url: `${base}/messages`, body });
     const res = await fetch(`${base}/messages`, { method: 'POST', headers: anthropicHeaders(key), body: JSON.stringify(body), signal });
     if (!res.ok) throw await upstreamError(res);
     if (!stream) {

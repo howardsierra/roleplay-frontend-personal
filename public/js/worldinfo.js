@@ -171,7 +171,7 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, force
     for (const book of books) {
         for (const e of Object.values(book.entries || {})) if (!e.disable && String(e.content || '').trim()) entries.push({ ...e, book: book.name });
     }
-    if (!entries.length) return { before: '', after: '', depth: [], activated: [] };
+    if (!entries.length) return { before: '', after: '', depth: [], activated: [], total: 0 };
 
     const recent = chatMessages.slice(-Math.max(1, cfg.scanDepth || 4));
     const lines = recent.map(m => (cfg.includeNames ? `${m.name}: ${m.mes}` : m.mes));
@@ -224,5 +224,5 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, force
     const depth = kept.filter(e => Number(e.position) === 4).map(e => ({
         content: e.content, depth: Number(e.depth) || 0, role: ['system', 'user', 'assistant'][Number(e.role) || 0],
     }));
-    return { before, after, depth, activated: kept };
+    return { before, after, depth, activated: kept, total: entries.length };
 }

@@ -65,8 +65,22 @@ router.post('/models', async (req, res) => {
     res.json(await listModels({ provider, baseUrl, key: await chatKey(provider, endpointId) }));
 });
 
+// The exact bodies recently sent to providers (no headers, so never API keys), for the Prompt Inspector.
+const recentRequests = new Map(); // requestId -> { at, provider, url, body }
+function rememberRequest(id, entry) {
+    if (!id) return;
+    recentRequests.set(String(id).slice(0, 64), { at: Date.now(), ...entry });
+    while (recentRequests.size > 20) recentRequests.delete(recentRequests.keys().next().value);
+}
+router.get('/requests/:id', (req, res) => {
+    const entry = recentRequests.get(req.params.id);
+    if (!entry) return res.status(404).json({ error: 'That request is no longer kept (only the last 20 are)' });
+    res.json(entry);
+});
+
 router.post('/generate', async (req, res) => {
-    const { provider, baseUrl, endpointId, model, messages, params = {}, stream = true } = req.body || {};
+    const { provider, baseUrl, endpointId, model, messages, params = {}, stream = true, requestId } = req.body || {};
+    const onRequest = ({ url, body }) => rememberRequest(requestId, { provider, url, body });
     if (!model) return res.status(400).json({ error: 'Pick a model in the Connection panel first' });
     if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ error: 'Nothing to send' });
     const key = await chatKey(provider, endpointId);
@@ -78,7 +92,7 @@ router.post('/generate', async (req, res) => {
         let reasoning = '';
         try {
             const result = await chatCompletion({
-                provider, baseUrl, key, model, messages, params, stream: false, signal: controller.signal,
+                provider, baseUrl, key, model, messages, params, stream: false, signal: controller.signal, onRequest,
                 onText: t => { text += t; }, onReasoning: r => { reasoning += r; },
             });
             return res.json({ text, reasoning, ...result });
@@ -99,7 +113,7 @@ router.post('/generate', async (req, res) => {
     const ping = setInterval(() => res.write(': ping\n\n'), 15000);
     try {
         const result = await chatCompletion({
-            provider, baseUrl, key, model, messages, params, stream: true, signal: controller.signal,
+            provider, baseUrl, key, model, messages, params, stream: true, signal: controller.signal, onRequest,
             onText: t => send({ t }), onReasoning: r => send({ r }),
         });
         send({ done: true, ...result });
