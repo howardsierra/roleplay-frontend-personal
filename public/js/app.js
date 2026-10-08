@@ -12,6 +12,7 @@ import { loadExtensions } from './st/extensions-loader.js';
 import { loadReverieExtensions } from './rv-ext/loader.js';
 import { loadLumiverseExtensions } from './spindle/host.js';
 import { initDialogueColors, openCastEditor } from './dialogue-colors.js';
+import { renderHome, bindHome } from './home.js';
 import { setFrameRpcHandler } from './render.js';
 import { initLayout } from './layout.js';
 import { el, icon, toast, modal, toggleDrawer, closeAllDrawers, openDrawer, isMobile } from './ui.js';
@@ -39,7 +40,55 @@ function hideMenu() {
     $id('extensionsMenu').classList.add('hidden');
 }
 
+/** --rv-composer-h: the message box's height, so floating extension UI can stay clear of it. */
+function trackComposerHeight() {
+    const form = document.getElementById('form_sheld');
+    if (!form || !window.ResizeObserver) return;
+    const set = () => {
+        const r = form.getBoundingClientRect();
+        document.documentElement.style.setProperty('--rv-composer-h', `${r.height ? Math.ceil(innerHeight - r.top) : 0}px`);
+    };
+    document.addEventListener('rv:home', set);
+    new ResizeObserver(() => { set(); liftLaunchers(); }).observe(form);
+    addEventListener('resize', () => { set(); liftLaunchers(); });
+    // Extensions add their floating buttons whenever they like; check again when the page changes.
+    let pending = 0;
+    new MutationObserver(() => { clearTimeout(pending); pending = setTimeout(liftLaunchers, 250); }).observe(document.body, { childList: true });
+    set();
+}
+
+/**
+ * Small floating buttons that extensions pin to the screen corners (Offstage, Phone & PC, …) are
+ * lifted above the message box when they would cover it, so the send button stays reachable.
+ */
+const OWN_LAYERS = '#app, #bg_layer, #toast-container, #modal-root, #st-dom, #movingDivs, #root, .lv-dock, .lv-dock-tabs, .popover-menu, .drawer, script, style, link';
+function liftLaunchers() {
+    const form = document.getElementById('form_sheld');
+    const box = form?.getBoundingClientRect();
+    if (!box?.height) return;
+    const composerH = Math.ceil(innerHeight - box.top);
+    const placed = []; // { left, right, top } of launchers already lifted this pass
+    for (const node of document.body.children) {
+        if (node.matches(OWN_LAYERS)) continue;
+        const cs = getComputedStyle(node);
+        if (cs.position !== 'fixed' || cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = node.getBoundingClientRect();
+        if (!r.width || r.width > 280 || r.height > 180) continue;
+        const lifted = node.dataset.rvLifted === '1';
+        const covers = r.bottom > box.top + 2 && r.top < box.bottom && r.right > box.left && r.left < box.right;
+        if (!covers && !lifted) continue;
+        // Stack above the message box, and above any launcher already lifted in the same column.
+        let bottom = composerH + 12;
+        for (const p of placed) if (r.right > p.left && r.left < p.right) bottom = Math.max(bottom, innerHeight - p.top + 8);
+        node.style.setProperty('top', 'auto', 'important');
+        node.style.setProperty('bottom', `${bottom}px`, 'important');
+        node.dataset.rvLifted = '1';
+        placed.push({ left: r.left, right: r.right, top: innerHeight - bottom - r.height });
+    }
+}
+
 function bindUi() {
+    trackComposerHeight();
     $id('btn-library').addEventListener('click', () => toggleDrawer('left-nav-panel'));
     $id('btn-settings').addEventListener('click', () => openSettings());
     $id('btn-gallery').addEventListener('click', openGallery);
@@ -191,8 +240,9 @@ async function boot() {
     await loadLumiverseExtensions().catch(err => console.error('Lumiverse extensions failed to load', err));
     await eventSource.emit(event_types.APP_READY);
 
-    const last = state.settings.lastCharacterId;
-    if (last && state.characters.some(c => c.id === last)) await openCharacter(last);
+    // Start on the home screen; recent stories are one tap away there.
+    bindHome();
+    renderHome();
     document.body.classList.add('ready');
 
     if (!state.settings.onboarded) await welcome();

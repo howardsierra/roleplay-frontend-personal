@@ -34,6 +34,8 @@ export function toast(message, type = 'info', { title = '', timeout = 3800 } = {
         el('div', { class: 'toast-body' }, title ? el('strong', {}, title) : null, el('div', { html: escapeHtml(message).replace(/\n/g, '<br>') })));
     node.addEventListener('click', () => dismiss());
     root.append(node);
+    // Keep at most four on screen so they never pile up over the page.
+    while (root.children.length > 4) root.firstElementChild.remove();
     requestAnimationFrame(() => node.classList.add('show'));
     const dismiss = () => {
         node.classList.remove('show');

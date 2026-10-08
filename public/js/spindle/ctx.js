@@ -127,13 +127,56 @@ function contextMenu({ position = { x: 0, y: 0 }, items = [] } = {}) {
     });
 }
 
+/**
+ * Where a widget goes when the extension doesn't say: bottom-right, above the message box,
+ * stacked upward so widgets never cover the composer, the send button or each other.
+ */
+function defaultFloatPosition(w, h) {
+    const composer = document.getElementById('form_sheld')?.getBoundingClientRect();
+    let y = (composer && composer.height ? composer.top : innerHeight - 96) - h - 12;
+    const x = innerWidth - w - 12;
+    const taken = [...document.querySelectorAll('.lv-float-box')].filter(b => b.style.display !== 'none').map(b => b.getBoundingClientRect());
+    for (let i = 0; i < 12; i++) {
+        const hit = taken.find(r => x < r.right && x + w > r.left && y < r.bottom && y + h > r.top);
+        if (!hit) break;
+        y = hit.top - h - 8;
+    }
+    return { x, y: Math.max(8, y) };
+}
+
+/** Every live float widget, so they can be moved out of the message box's way when it changes. */
+const floats = new Set(); // { box, get: () => pos, size: () => size, move(x, y) }
+function keepFloatsClear() {
+    const composer = document.getElementById('form_sheld')?.getBoundingClientRect();
+    if (!composer?.height) return;
+    for (const f of floats) {
+        if (f.box.classList.contains('fullscreen') || f.box.style.display === 'none') continue;
+        const pos = f.get();
+        const { h } = f.size();
+        if (pos.y + h > composer.top - 4 && pos.y < composer.bottom) f.move(pos.x, Math.max(8, composer.top - h - 12));
+    }
+}
+let floatWatch = false;
+function watchComposer() {
+    if (floatWatch) return;
+    floatWatch = true;
+    const form = document.getElementById('form_sheld');
+    if (form && window.ResizeObserver) new ResizeObserver(() => keepFloatsClear()).observe(form);
+    addEventListener('resize', () => setTimeout(keepFloatsClear, 50));
+    document.addEventListener('rv:home', () => setTimeout(keepFloatsClear, 50));
+}
+
 function floatWidget(opts = {}, track) {
+    watchComposer();
     const w = opts.width || 48;
     const h = opts.height || 48;
     const root = el('div', { class: `lv-float${opts.chromeless ? ' chromeless' : ''}`, title: opts.tooltip || '' });
-    const box = el('div', { class: 'lv-float-box', style: { zIndex: ++zTop } }, root);
+    const box = el('div', { class: 'lv-float-box', 'data-lv-ext': opts.__ext || '', style: { zIndex: ++zTop } }, root);
     const dragEnd = new Set();
-    let pos = opts.initialPosition || { x: innerWidth - w - 16, y: innerHeight - h - 96 };
+    let pos = opts.initialPosition || defaultFloatPosition(w, h);
+    // A saved or requested spot that would sit on the message box is moved just above it.
+    const composer = document.getElementById('form_sheld')?.getBoundingClientRect();
+    if (composer?.height && !opts.fullscreen && pos.y + h > composer.top && pos.y < composer.bottom) pos = { x: pos.x, y: Math.max(8, composer.top - h - 12) };
     let size = { w, h };
     const place = () => {
         if (box.classList.contains('fullscreen')) return;
@@ -169,7 +212,9 @@ function floatWidget(opts = {}, track) {
     window.addEventListener('resize', place);
     if (opts.fullscreen) box.classList.add('fullscreen');
     document.body.append(box);
-    const destroy = () => { box.remove(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('resize', place); };
+    const entry = { box, get: () => ({ ...pos }), size: () => ({ ...size }), move: (x, y) => { pos = { x, y }; place(); } };
+    floats.add(entry);
+    const destroy = () => { floats.delete(entry); box.remove(); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('resize', place); };
     track(destroy);
     return {
         root,
@@ -444,7 +489,7 @@ export function createCtx(ext, channel) {
             showModal: opts => makeModal(opts, track),
             showConfirm: async (opts = {}) => ({ confirmed: !!(await confirmDialog(opts.message || '', { title: opts.title || ext.manifest.name, okLabel: opts.confirmLabel, danger: opts.variant === 'danger' })) }),
             showContextMenu: opts => contextMenu(opts),
-            createFloatWidget: opts => floatWidget(opts, track),
+            createFloatWidget: opts => floatWidget({ ...opts, __ext: id }, track),
             requestDockPanel: opts => dockPanel(opts, track),
             mount(point) {
                 const key = `${id}:${point}`;

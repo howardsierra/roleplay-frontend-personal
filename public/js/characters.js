@@ -22,7 +22,7 @@ function cardTile(c, { compact = false } = {}) {
         el('div', { class: 'char-tile-info' },
             el('div', { class: 'char-tile-name' }, c.fav ? icon('star', 'fav-star') : null, c.name),
             compact ? el('div', { class: 'char-tile-notes' }, c.notes || (c.tags || []).slice(0, 4).join(' · ')) : el('div', { class: 'char-tile-tags' }, (c.tags || []).slice(0, 3).map(t => el('span', { class: 'tag' }, t)))));
-    tile.addEventListener('click', () => openCharacter(c.id));
+    tile.addEventListener('click', () => showCharacterProfile(c.id));
     tile.addEventListener('contextmenu', e => {
         e.preventDefault();
         editCharacter(c.id);
@@ -37,9 +37,13 @@ export function renderLibrary() {
     const side = document.getElementById('rm_print_characters_block');
     side.replaceChildren(...sorted.map(c => cardTile(c, { compact: true })));
     if (!sorted.length) side.append(el('div', { class: 'empty' }, state.characters.length ? 'No matches.' : 'No characters yet — import a card to start.'));
+    const hq = (document.getElementById('home-search')?.value || '').trim().toLowerCase();
+    const homeList = [...state.characters].filter(c => !hq || c.name.toLowerCase().includes(hq) || (c.tags || []).some(t => t.toLowerCase().includes(hq)))
+        .sort((a, b) => (b.fav - a.fav) || ((b.lastChat || b.updated) - (a.lastChat || a.updated)));
     const grid = document.getElementById('home-grid');
-    grid.replaceChildren(...sorted.map(c => cardTile(c)));
-    if (!sorted.length) grid.append(el('div', { class: 'empty wide' }, el('i', { class: 'fa-solid fa-masks-theater' }), el('p', {}, 'Your stage is empty. Import a SillyTavern / Chub character card (PNG or JSON) or create one.')));
+    grid.replaceChildren(...homeList.map(c => cardTile(c)));
+    if (hq && !homeList.length) grid.append(el('div', { class: 'empty wide' }, 'No characters match.'));
+    else if (!homeList.length) grid.append(el('div', { class: 'empty wide' }, el('i', { class: 'fa-solid fa-masks-theater' }), el('p', {}, 'Your stage is empty. Import a SillyTavern / Chub character card (PNG or JSON) or create one.')));
 }
 
 // ---------------- open / chats ----------------
@@ -61,7 +65,7 @@ function greetingMessage() {
     };
 }
 
-export async function openCharacter(id, { chatId } = {}) {
+export async function openCharacter(id, { chatId, fresh = false } = {}) {
     if (state.generating) return toast('Wait for the current reply to finish', 'warning');
     await saveChat();
     const character = await api.get(`characters/${encodeURIComponent(id)}`);
@@ -71,7 +75,7 @@ export async function openCharacter(id, { chatId } = {}) {
     updateHeader();
     const chats = await api.get(`chats/${encodeURIComponent(id)}`);
     const target = chatId || localStorage.getItem(`rv-last-chat-${id}`) || chats[0]?.id;
-    if (target && chats.some(c => c.id === target)) await openChat(target);
+    if (!fresh && target && chats.some(c => c.id === target)) await openChat(target);
     else await newChat();
     state.settings.lastCharacterId = id;
     saveSettingsDebounced();
@@ -140,7 +144,9 @@ export async function closeChat() {
     document.body.classList.add('no-character');
     updateHeader();
     renderLibrary();
+    applyTheme();
     await eventSource.emit(event_types.CHAT_CHANGED, null);
+    (await import('./home.js')).renderHome();
 }
 
 export async function branchChat(id) {
@@ -217,8 +223,53 @@ export async function importCharacter() {
     await loadCharacters();
     if (last) {
         await maybeImportEmbeddedBook(last);
-        openCharacter(last.id);
+        // Stay where you are; just point out the new card.
+        const tile = document.querySelector(`#home-grid .char-tile[data-id="${CSS.escape(last.id)}"], #rm_print_characters_block .char-tile[data-id="${CSS.escape(last.id)}"]`);
+        tile?.classList.add('just-added');
+        tile?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        setTimeout(() => tile?.classList.remove('just-added'), 2600);
     }
+}
+
+const timeAgo = ms => {
+    const s = (Date.now() - ms) / 1000;
+    if (s < 3600) return `${Math.max(1, Math.floor(s / 60))} min ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+    if (s < 86400 * 30) return `${Math.floor(s / 86400)} d ago`;
+    return new Date(ms).toLocaleDateString();
+};
+const plain = text => String(text ?? '').replace(/<[^>]+>/g, ' ').replace(/[*_~`#]+/g, '').replace(/\s+/g, ' ').trim();
+
+/** A character's profile: portrait, details and their chats, with Continue / New chat / Edit. */
+export async function showCharacterProfile(id) {
+    const [character, chats] = await Promise.all([
+        api.get(`characters/${encodeURIComponent(id)}`),
+        api.get(`chats/${encodeURIComponent(id)}`).catch(() => []),
+    ]);
+    const d = character.card.data;
+    let close = () => {};
+    const go = async opts => { close(); await openCharacter(id, opts); };
+    // No chat is open yet, so fill {{char}} / {{user}} here rather than from the (empty) current chat.
+    const about = plain(substituteParams(String(d.creator_notes || d.description || '').replace(/\{\{char\}\}|<BOT>|<CHAR>/gi, d.name).replace(/\{\{user\}\}|<USER>/gi, userName()))).slice(0, 600);
+    const content = el('div', { class: 'char-profile' },
+        el('button', { class: 'icon-btn char-profile-close', title: 'Close', onclick: () => close() }, icon('xmark')),
+        el('div', { class: 'char-profile-art', style: { backgroundImage: `url("${avatarUrl(character)}")` } }),
+        el('div', { class: 'char-profile-body' },
+            el('h2', { class: 'char-profile-name' }, d.name),
+            d.creator ? el('div', { class: 'hint' }, `by ${d.creator}`) : null,
+            d.tags?.length ? el('div', { class: 'char-profile-tags' }, d.tags.slice(0, 12).map(t => el('span', { class: 'tag' }, t))) : null,
+            about ? el('p', { class: 'char-profile-about' }, about) : null,
+            el('div', { class: 'char-profile-actions' },
+                chats.length ? el('button', { class: 'btn primary', onclick: () => go({ chatId: chats[0].id }) }, icon('book-open'), 'Continue') : null,
+                el('button', { class: `btn${chats.length ? '' : ' primary'}`, onclick: () => go({ fresh: true }) }, icon('feather'), 'New chat'),
+                el('button', { class: 'btn', onclick: () => { close(); editCharacter(id); } }, icon('pen'), 'Edit')),
+            chats.length ? el('div', { class: 'char-profile-chats' },
+                el('div', { class: 'section-label' }, `Chats (${chats.length})`),
+                chats.slice(0, 6).map(c => el('button', { class: 'char-profile-chat', onclick: () => go({ chatId: c.id }) },
+                    el('span', { class: 'char-profile-chat-title' }, c.id.replace(`${d.name} - `, '')),
+                    el('span', { class: 'hint' }, `${c.count} messages · ${timeAgo(c.updated)}`),
+                    c.preview ? el('span', { class: 'char-profile-chat-preview' }, plain(c.preview).slice(0, 120)) : null))) : null));
+    modal({ title: '', content, buttons: [], wide: true, className: 'char-profile-wrap', onOpen: (_body, done) => { close = () => done(null); } });
 }
 
 async function maybeImportEmbeddedBook(character) {
