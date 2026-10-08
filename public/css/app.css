@@ -1224,3 +1224,55 @@ body.no-character #btn-home { display: none; }
 /* The character sheet has nothing to show on the home screen. */
 body.no-character #sheet-panel { display: none !important; }
 body.no-character.sheet-docked #app { margin-right: 0 !important; }
+
+/* ---------- Character profile ---------- */
+.char-profile-wrap .modal { padding: 0; overflow: hidden; max-width: 860px; }
+.char-profile-wrap .modal-body { padding: 0; }
+.char-profile { position: relative; display: grid; grid-template-columns: minmax(220px, 300px) 1fr; min-height: 420px; }
+.char-profile-close { position: absolute; top: 10px; right: 10px; z-index: 2; background: color-mix(in srgb, var(--SmartThemeBlurTintColor) 70%, transparent); backdrop-filter: blur(8px); }
+.char-profile-art { background-size: cover; background-position: center 20%; min-height: 100%; position: relative; }
+.char-profile-art::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to right, transparent 60%, var(--rv-surface-2, rgba(0,0,0,.4))); }
+.char-profile-body { padding: 26px 26px 22px; display: flex; flex-direction: column; gap: 10px; min-width: 0; max-height: min(78vh, 680px); overflow-y: auto; }
+.char-profile-name { margin: 0; font-family: var(--rv-heading-font); font-size: 2em; font-weight: 600; line-height: 1.1; }
+.char-profile-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.char-profile-about { margin: 4px 0; color: var(--rv-text-dim); line-height: 1.55; font-size: .92em; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.char-profile-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+.char-profile-chats { display: grid; gap: 6px; margin-top: 6px; }
+.char-profile-chats .section-label { margin: 4px 0 2px; }
+.char-profile-chat { display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 12px; background: var(--rv-surface); border: 1px solid var(--SmartThemeBorderColor); color: inherit; transition: border-color .2s, background .2s; }
+.char-profile-chat:hover { border-color: color-mix(in srgb, var(--rv-accent) 50%, transparent); }
+.char-profile-chat-title { font-weight: 600; font-size: .92em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.char-profile-chat-preview { font-size: .82em; color: var(--rv-text-dim); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 640px) {
+    .char-profile { grid-template-columns: 1fr; min-height: 0; }
+    .char-profile-art { min-height: 0; height: 38vh; }
+    .char-profile-art::after { background: linear-gradient(to bottom, transparent 55%, var(--rv-surface-2, rgba(0,0,0,.5))); }
+    .char-profile-body { max-height: none; padding: 16px 18px 20px; margin-top: -40px; position: relative; }
+    .char-profile-wrap .modal { max-height: 92dvh; overflow-y: auto; }
+}
+.char-tile.just-added { animation: just-added 2.4s var(--rv-ease); }
+@keyframes just-added { 0%, 60% { box-shadow: 0 0 0 3px var(--rv-accent), 0 0 30px var(--rv-accent); } 100% { box-shadow: none; } }
+
+/* ---------- Sidebar character list: roomier, never squashed ---------- */
+.char-tile.compact { flex: none; min-height: 64px; padding: 8px 10px; gap: 12px; }
+.char-tile.compact .char-tile-img { width: 48px; height: 60px; flex: 0 0 48px; border-radius: 12px; background-size: cover; background-position: center 20%; box-shadow: inset 0 0 0 1px var(--SmartThemeBorderColor); }
+.char-tile.compact .char-tile-info { display: grid; gap: 3px; }
+.char-tile.compact .char-tile-name { font-size: .95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.char-tile.compact .char-tile-notes { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.35; }
+.char-list { gap: 4px; }
+@media (max-width: 760px) {
+    #left-nav-panel { width: min(100vw, 420px) !important; }
+    .char-tile.compact { min-height: 72px; }
+    .char-tile.compact .char-tile-img { width: 52px; height: 66px; flex-basis: 52px; }
+}
+/* Floating extension buttons step aside while a popup or a phone drawer is open. */
+body:has(#modal-root .modal-wrap) .ts-widget-root,
+body:has(#modal-root .modal-wrap) .lv-float-box:not(.fullscreen),
+body:has(#modal-root .modal-wrap) [data-rv-lifted] { visibility: hidden !important; }
+@media (max-width: 760px) {
+    body:has(.drawer.open) .ts-widget-root,
+    body:has(.drawer.open) .lv-float-box:not(.fullscreen),
+    body:has(.drawer.open) .lv-dock-tabs,
+    body:has(.drawer.open) [data-rv-lifted] { visibility: hidden !important; }
+}
+.char-profile-tags .tag { font-size: .75em; padding: 3px 10px; border-radius: 999px; background: color-mix(in srgb, var(--rv-accent) 16%, transparent); border: 1px solid color-mix(in srgb, var(--rv-accent) 30%, transparent); }
