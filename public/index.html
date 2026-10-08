@@ -36,6 +36,7 @@
         <header id="top-bar">
             <div id="top-settings-holder">
                 <button class="icon-btn" id="btn-library" title="Characters"><i class="fa-solid fa-users"></i></button>
+                <button class="icon-btn" id="btn-home" title="Home"><i class="fa-solid fa-house"></i></button>
                 <button id="chat-title" class="chat-title" title="Chats with this character">
                     <img id="chat-title-avatar" alt="">
                     <span class="chat-title-text">
@@ -57,15 +58,20 @@
             <section id="home" class="home">
                 <div class="home-hero">
                     <div class="home-mark">✦</div>
-                    <h1>Reverie</h1>
-                    <p>Step into a story. Import a character card or create your own.</p>
+                    <h1 id="home-greeting">Reverie</h1>
+                    <p id="home-sub">Step into a story. Import a character card or create your own.</p>
                     <div class="home-actions">
-                        <button class="btn primary" data-action="import-character"><i class="fa-solid fa-file-import"></i> Import card</button>
+                        <button class="btn primary hidden" id="home-continue"><i class="fa-solid fa-book-open"></i> <span>Continue</span></button>
+                        <button class="btn" data-action="import-character"><i class="fa-solid fa-file-import"></i> Import card</button>
                         <button class="btn" data-action="create-character"><i class="fa-solid fa-feather"></i> Create</button>
                     </div>
                 </div>
-                <div class="home-recent">
-                    <div class="section-label">Your characters</div>
+                <div class="home-section hidden" id="home-stories-section">
+                    <div class="section-label">Recent stories</div>
+                    <div id="home-stories" class="home-stories"></div>
+                </div>
+                <div class="home-section">
+                    <div class="section-label home-chars-label">Your characters <input id="home-search" class="input home-search" type="search" placeholder="Search characters…" autocomplete="off"></div>
                     <div id="home-grid" class="char-grid"></div>
                 </div>
             </section>

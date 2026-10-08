@@ -32,6 +32,18 @@ function stamp() {
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}h${p(d.getMinutes())}m${p(d.getSeconds())}s`;
 }
 
+/** A readable one-line preview: no code blocks, HTML, or markdown symbols. */
+export function plainPreview(text, max) {
+    return String(text ?? '')
+        .replace(/```[\s\S]*?(```|$)/g, ' ')
+        .replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/[*_~`#>]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, max);
+}
+
 // Most recently touched chats across every character (for the "Recent stories" sidebar).
 router.get('/', async (req, res) => {
     const limit = Math.min(50, Number(req.query.limit) || 12);
@@ -51,7 +63,7 @@ router.get('/', async (req, res) => {
         try {
             const { messages } = parseJsonl(await fsp.readFile(fileFor(item.charId, item.chatId), 'utf8'));
             item.count = messages.length;
-            item.preview = String(messages.at(-1)?.mes ?? '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 90);
+            item.preview = plainPreview(messages.at(-1)?.mes, 140);
         } catch { item.preview = ''; }
     }
     res.json(top);
@@ -71,7 +83,7 @@ router.get('/:charId', async (req, res) => {
         try {
             const { messages } = parseJsonl(src);
             count = messages.length;
-            preview = String(messages.at(-1)?.mes ?? '').replace(/<[^>]+>/g, '').slice(0, 160);
+            preview = plainPreview(messages.at(-1)?.mes, 160);
         } catch { preview = '(unreadable chat file)'; }
         list.push({ id: name.slice(0, -6), updated: stat.mtimeMs, count, preview });
     }

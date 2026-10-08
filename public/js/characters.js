@@ -37,9 +37,13 @@ export function renderLibrary() {
     const side = document.getElementById('rm_print_characters_block');
     side.replaceChildren(...sorted.map(c => cardTile(c, { compact: true })));
     if (!sorted.length) side.append(el('div', { class: 'empty' }, state.characters.length ? 'No matches.' : 'No characters yet — import a card to start.'));
+    const hq = (document.getElementById('home-search')?.value || '').trim().toLowerCase();
+    const homeList = [...state.characters].filter(c => !hq || c.name.toLowerCase().includes(hq) || (c.tags || []).some(t => t.toLowerCase().includes(hq)))
+        .sort((a, b) => (b.fav - a.fav) || ((b.lastChat || b.updated) - (a.lastChat || a.updated)));
     const grid = document.getElementById('home-grid');
-    grid.replaceChildren(...sorted.map(c => cardTile(c)));
-    if (!sorted.length) grid.append(el('div', { class: 'empty wide' }, el('i', { class: 'fa-solid fa-masks-theater' }), el('p', {}, 'Your stage is empty. Import a SillyTavern / Chub character card (PNG or JSON) or create one.')));
+    grid.replaceChildren(...homeList.map(c => cardTile(c)));
+    if (hq && !homeList.length) grid.append(el('div', { class: 'empty wide' }, 'No characters match.'));
+    else if (!homeList.length) grid.append(el('div', { class: 'empty wide' }, el('i', { class: 'fa-solid fa-masks-theater' }), el('p', {}, 'Your stage is empty. Import a SillyTavern / Chub character card (PNG or JSON) or create one.')));
 }
 
 // ---------------- open / chats ----------------
@@ -140,7 +144,9 @@ export async function closeChat() {
     document.body.classList.add('no-character');
     updateHeader();
     renderLibrary();
+    applyTheme();
     await eventSource.emit(event_types.CHAT_CHANGED, null);
+    (await import('./home.js')).renderHome();
 }
 
 export async function branchChat(id) {
