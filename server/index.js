@@ -9,6 +9,7 @@ import charactersRouter from './routes/characters.js';
 import chatsRouter from './routes/chats.js';
 import aiRouter from './routes/ai.js';
 import filesRouter from './routes/files.js';
+import backupRouter, { dailySnapshot } from './routes/backup.js';
 import { apiRouter as extensionsApi, serveRouter as extensionsServe, dataRouter as extDataRouter } from './routes/extensions.js';
 import stCompatRouter, { USER_FILES } from './routes/st-compat.js';
 import { spindleRouter, spindleServe, oauthRouter, lumiverseAliases } from './routes/spindle.js';
@@ -126,6 +127,7 @@ app.use('/api/spindle-oauth', oauthRouter);
 app.use('/api/v1', lumiverseAliases);
 app.use('/api/ext-data', extDataRouter);
 app.use('/api', aiRouter);
+app.use('/api', backupRouter);
 app.use('/api', filesRouter);
 app.get('/api/info', (_req, res) => res.json({ name: 'Reverie', version: process.env.npm_package_version || '0.1.0', auth: !!PASSWORD }));
 
@@ -174,6 +176,9 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, HOST, () => {
     startSpindle().catch(err => console.error('Lumiverse extensions failed to start', err));
+    // A snapshot of your data on the server once a day (the last few are kept; see Settings → More → Backup).
+    setTimeout(() => dailySnapshot(), 60 * 1000).unref();
+    setInterval(() => dailySnapshot(), 60 * 60 * 1000).unref();
     console.log(`\n  ✦ Reverie is running → http://localhost:${PORT}`);
     console.log(`    data folder: ${DATA_DIR}`);
     if (!PASSWORD) console.log('    ⚠ No APP_PASSWORD set — anyone who can reach this address can use it. Set one before exposing it online.\n');

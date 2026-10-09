@@ -17,6 +17,8 @@ const reskinReason = ext => UI_RESKINS[ext.name] || null;
 // copies would fight the native versions, so they're skipped unless the user forces them on.
 export const BUILT_IN = [
     { test: ext => /avatar.?banner/i.test(ext.name) || /^avatar banner$/i.test(ext.manifest?.display_name || ''), reason: 'Avatar Banner is built into Reverie (Settings → Look → Avatar banners).' },
+    { test: ext => /smart.?dialogue.?colou?rizer/i.test(ext.name) || /smart dialogue colou?rizer/i.test(ext.manifest?.display_name || ''), reason: 'Smart Dialogue Colorizer is built into Reverie (Settings → Look → Dialogue colors).' },
+    { test: ext => /quick.?persona/i.test(ext.name) || /^quick persona$/i.test(ext.manifest?.display_name || ''), reason: 'Quick Persona is built into Reverie (tap your avatar beside the message box).' },
     { test: ext => /persona.?manager/i.test(ext.name) || /persona manager/i.test(ext.manifest?.display_name || ''), reason: 'Persona Manager is built into Reverie (sidebar → Personas).' },
 ];
 export const builtInReason = ext => BUILT_IN.find(b => b.test(ext))?.reason || null;

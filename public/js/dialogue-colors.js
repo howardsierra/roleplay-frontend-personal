@@ -29,9 +29,39 @@ export const DIALOGUE_DEFAULTS = {
 };
 
 export const dialogueSettings = () => {
+    if (!state.settings.dialogue) importSmartDialogueColorizer();
     state.settings.dialogue = { ...DIALOGUE_DEFAULTS, ...(state.settings.dialogue || {}) };
     return state.settings.dialogue;
 };
+
+/** Carries Smart Dialogue Colorizer's saved settings over the first time (that extension is built in now). */
+function importSmartDialogueColorizer() {
+    const sdc = state.settings.extension_settings?.['SillyTavern-Smart-Dialogue-Colorizer'];
+    if (!sdc || typeof sdc !== 'object') return;
+    const source = v => ({ avatar_smart: 'avatar', static_color: 'static', disabled: 'off', char_color_override: 'avatar' })[v] || 'avatar';
+    const c = sdc.charColorSettings || {};
+    const p = sdc.personaColorSettings || {};
+    const overrides = {};
+    for (const [avatarName, color] of Object.entries(c.colorOverrides || {})) {
+        const stem = String(avatarName).replace(/\.[^.]+$/, '');
+        const match = (state.characters || []).find(ch => ch.avatar === avatarName || ch.name === stem);
+        overrides[`char:${match?.avatar || avatarName}`] = color;
+    }
+    for (const [avatarName, color] of Object.entries(p.colorOverrides || {})) {
+        const match = (state.settings.personas || []).find(x => x.stAvatar === avatarName || x.id === avatarName);
+        if (match) overrides[`persona:${match.id}`] = color;
+    }
+    state.settings.dialogue = {
+        enabled: true,
+        charSource: source(c.colorizeSource),
+        personaSource: source(p.colorizeSource),
+        ...(c.staticColor ? { charStatic: c.staticColor } : {}),
+        ...(p.staticColor ? { personaStatic: p.staticColor } : {}),
+        colorNames: !!c.colorNameText,
+        overrides,
+    };
+    saveSettingsDebounced();
+}
 
 // ---------------------------------------------------------------- color math
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));

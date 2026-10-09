@@ -47,7 +47,7 @@ export async function renderHome() {
     }
     $id('home-stories-section').classList.toggle('hidden', !recent.length);
     $id('home-stories').replaceChildren(...recent.map(item => el('button', { class: 'home-story', title: `${item.charName} · ${item.chatId}`, onclick: () => open(item) },
-        el('div', { class: 'home-story-art', style: { backgroundImage: `url("${avatarUrl(item.avatar)}")` } }),
+        el('div', { class: `home-story-art${item.banner ? ' has-banner' : ''}`, style: { backgroundImage: `url("${item.banner ? `api/characters/${encodeURIComponent(item.charId)}/banner?v=${item.charUpdated || 0}` : avatarUrl(item.avatar)}")` } }),
         el('div', { class: 'home-story-body' },
             el('div', { class: 'home-story-name' }, item.charName),
             el('div', { class: 'home-story-meta' }, icon('clock'), ` ${timeAgo(item.updated)} · ${item.count ?? 0} messages`),

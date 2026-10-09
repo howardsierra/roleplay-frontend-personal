@@ -248,6 +248,7 @@ export async function showCharacterProfile(id) {
         api.get(`chats/${encodeURIComponent(id)}`).catch(() => []),
     ]);
     const d = character.card.data;
+    const banner = d.extensions?.[BANNER_KEY] || {};
     let close = () => {};
     const go = async opts => { close(); await openCharacter(id, opts); };
     // No chat is open yet, so fill {{char}} / {{user}} here rather than from the (empty) current chat.
@@ -256,7 +257,8 @@ export async function showCharacterProfile(id) {
         el('button', { class: 'icon-btn char-profile-close', title: 'Close', onclick: () => close() }, icon('xmark')),
         el('div', { class: 'char-profile-art', style: { backgroundImage: `url("${avatarUrl(character)}")` } }),
         el('div', { class: 'char-profile-body' },
-            el('h2', { class: 'char-profile-name' }, d.name),
+            banner.banner ? el('div', { class: 'char-profile-banner', style: { backgroundImage: `url("api/characters/${encodeURIComponent(id)}/banner?v=${character.updated || 0}")` } }) : null,
+            el('h2', { class: `char-profile-name${banner.banner ? ' has-banner' : ''}`, style: /^#[0-9a-f]{3,8}$/i.test(banner.accentColor || '') ? `--ab-accent: ${banner.accentColor}` : null }, d.name),
             d.creator ? el('div', { class: 'hint' }, `by ${d.creator}`) : null,
             d.tags?.length ? el('div', { class: 'char-profile-tags' }, d.tags.slice(0, 12).map(t => el('span', { class: 'tag' }, t))) : null,
             about ? el('p', { class: 'char-profile-about' }, about) : null,

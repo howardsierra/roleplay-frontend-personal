@@ -109,7 +109,7 @@ If an extension imports a name Reverie doesn't provide, it gets a harmless no-op
 |---|---|
 | ✅ Tested working | Phone & PC, Offstage, Wardrobe, Surtitle, Context Lens, Extension Organizer, Silly Sim Tracker, Clickable Inputs, Guided Generations, Code Runner, Input History, LALib, Quick Persona |
 | ✅ Loads, UI appears (not exercised in depth) | Saucepan Seasoning, CSS Snippets, Custom Theme Style Inputs, Chat Top Bar (TopInfoBar), Inline Image Generation (needs its own image API settings) |
-| ✅ Built in instead | Preset Organizer & Prompt Checkboxes (sections, search, bulk toggles, checkboxes and the preset navigator are part of Reverie's prompt manager), Sampler Commands (`/sampler-get` and `/sampler-set` are native), Backup Manager (Settings → More → Backup), Background Manager (per-chat backgrounds are native) |
+| ✅ Built in instead | Preset Organizer & Prompt Checkboxes (sections, search, bulk toggles, checkboxes and the preset navigator are part of Reverie's prompt manager), Sampler Commands (`/sampler-get` and `/sampler-set` are native), Backup Manager (Settings → More → Backup), Background Manager (per-chat backgrounds are native), Smart Dialogue Colorizer (Look → Dialogue colors; its settings are carried over), Quick Persona (tap your avatar beside the message box) |
 | ⚪ Nothing to attach to | Persona Manager, Avatar Banner: they restyle SillyTavern's own persona and character panels, which Reverie replaces with its own. They load without errors. |
 | ✅ With the classic layout | Moonlit Echoes Theme reskins SillyTavern's whole interface. Turn on **Settings → Look → Interface layout → Classic** (or click **Switch to classic layout** on its card). Reverie then uses SillyTavern's geometry: a fixed top bar, a centred chat column and side drawers. In the Reverie layout it's skipped unless you choose **Load anyway**. |
 | ➡️ Built in instead | Smart Dialogue Colorizer depends on SillyTavern's own character editor; use **Dialogue colors** instead (or Prism). |
@@ -159,6 +159,20 @@ Two SillyTavern extensions are built in, ported from their own code, and they re
   - Set banners in the character editor (*Banner* tab) or the Persona Manager editor. Crop from the avatar or upload an image.
   - Global options are in **Look → Avatar banners**, including the character-panel banner.
   - Cards that already carry banners from SillyTavern show them.
+
+## Backups
+
+Settings → More → Backup.
+
+- **Download backup:** one `.tar.gz` of everything: characters, chats, personas, presets, lorebooks, themes, images, extension data and settings.
+  - Installed extensions are optional, for a much smaller file.
+  - API keys are left out unless you tick *Include API keys*.
+- **Restore from file:** streams the upload, checks it's a Reverie backup, and asks how to restore.
+  - **Merge** adds the backup's files and replaces same-named ones.
+  - **Replace** makes Reverie exactly like the backup.
+- **Snapshots:** the server keeps the last 5 snapshots, taken daily and before every restore, so any restore can be undone from the list.
+  - Snapshots live on the same volume. They protect against mistakes, not against losing the server, so download a backup too.
+  - Reverie nudges you, at most once a day, if your last download is over two weeks old.
 
 ## Reverie extensions, presets and themes
 
