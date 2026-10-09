@@ -408,7 +408,7 @@ body.chat-style-document .user_mes .mes_text { font-style: italic; color: var(--
 @keyframes dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-4px); } }
 
 /* =========================== composer =========================== */
-#form_sheld { flex: 0 0 auto; position: relative; padding: 0 12px calc(10px + var(--safe-bottom)); }
+#form_sheld { flex: 0 0 auto; position: relative; z-index: 10; padding: 0 12px calc(10px + var(--safe-bottom)); } /* above message cards (banners lift them to z 2), so the ✨ menu never opens under them */
 .typing-indicator { position: absolute; top: -26px; left: 26px; display: flex; gap: 4px; }
 .typing-indicator span { width: 6px; height: 6px; border-radius: 50%; background: var(--rv-accent); animation: dot 1.2s infinite; }
 .typing-indicator span:nth-child(2) { animation-delay: .15s; }
