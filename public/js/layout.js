@@ -46,12 +46,7 @@ export async function renderRecent() {
                 el('span', { class: 'story-preview' }, item.preview || '—'))),
             el('button', { class: 'story-del', title: 'Delete this chat', onclick: async () => {
                 if (!await confirmDialog(`Delete “${item.chatId}”?`, { okLabel: 'Delete', danger: true })) return;
-                await api.del(`chats/${encodeURIComponent(item.charId)}/${encodeURIComponent(item.chatId)}`);
-                if (active) {
-                    const { openCharacter } = await import('./characters.js');
-                    state.chatId = null;
-                    await openCharacter(item.charId);
-                }
+                await (await import('./characters.js')).deleteChat(item.charId, item.chatId);
                 renderRecent();
             } }, icon('trash-can')));
     }));

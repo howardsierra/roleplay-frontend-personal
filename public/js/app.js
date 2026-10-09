@@ -251,6 +251,7 @@ async function boot() {
     import('./personas.js').then(m => m.bindPersonas());
     import('./avatar-banner.js').then(m => m.bindAvatarBanner());
     import('./persona-switch.js').then(m => m.bindPersonaSwitch());
+    import('./step-aside.js').then(m => m.bindStepAside());
     setTimeout(() => import('./backup.js').then(m => m.backupReminder()), 8000);
     import('./persona-manager/index.js').then(m => m.initPersonaManager());
     $id('btn-persona').addEventListener('click', () => {

@@ -156,6 +156,22 @@ export async function branchChat(id) {
     toast('Branched into a new chat', 'success');
 }
 
+/**
+ * Deletes a chat. Pending saves finish first (so a late save can't bring it back); if it was the
+ * open chat, you land in the most recent remaining one, or a fresh one if none are left.
+ */
+export async function deleteChat(charId, chatId) {
+    const isOpen = state.character?.id === charId && state.chatId === chatId;
+    if (isOpen) await saveChat();
+    await api.del(`chats/${encodeURIComponent(charId)}/${encodeURIComponent(chatId)}`);
+    if (localStorage.getItem(`rv-last-chat-${charId}`) === chatId) localStorage.removeItem(`rv-last-chat-${charId}`);
+    if (isOpen) {
+        state.chatId = null;
+        await openCharacter(charId);
+    }
+    await eventSource.emit(event_types.CHAT_DELETED, chatId);
+}
+
 export async function showChatList() {
     if (!state.character) return;
     const charId = state.character.id;
@@ -179,9 +195,7 @@ export async function showChatList() {
                     el('a', { class: 'icon-btn', title: 'Export (.jsonl)', href: `api/chats/${encodeURIComponent(charId)}/${encodeURIComponent(c.id)}/export` }, icon('download')),
                     el('button', { class: 'icon-btn danger', title: 'Delete', onclick: async () => {
                         if (!await confirmDialog(`Delete chat "${c.id}"?`, { okLabel: 'Delete', danger: true })) return;
-                        await api.del(`chats/${encodeURIComponent(charId)}/${encodeURIComponent(c.id)}`);
-                        if (c.id === state.chatId) { state.chatId = null; state.chat = []; clearChat(); }
-                        await eventSource.emit(event_types.CHAT_DELETED, c.id);
+                        await deleteChat(charId, c.id);
                         render();
                     } }, icon('trash-can'))));
             return row;
@@ -368,12 +382,8 @@ export async function editCharacter(id, { isNew = false } = {}) {
             await api.del(`characters/${encodeURIComponent(id)}`);
             await eventSource.emit(event_types.CHARACTER_DELETED, { id });
             if (state.character?.id === id) {
-                state.character = null;
-                state.chat = [];
-                state.chatId = null;
-                clearChat();
-                document.body.classList.add('no-character');
-                updateHeader();
+                state.chatId = null; // nothing left to save: the chats went with the character
+                await closeChat();
             }
             document.querySelector('.modal-wrap.open .modal-head .icon-btn')?.click();
             loadCharacters();
