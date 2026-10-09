@@ -1,5 +1,6 @@
 // Chats are stored in SillyTavern's JSONL format so they can be moved between apps:
 // line 1 = header { user_name, character_name, create_date, chat_metadata }, then one message per line.
+import { bannerData } from '../lib/card.js';
 import express from 'express';
 import fsp from 'node:fs/promises';
 import { DIRS, listJson, safeName, within, writeAtomic, removeFile } from '../lib/storage.js';
@@ -54,7 +55,7 @@ router.get('/', async (req, res) => {
         try { names = (await fsp.readdir(dirFor(charId))).filter(n => n.endsWith('.jsonl')); } catch { continue; }
         for (const name of names) {
             const stat = await fsp.stat(within(dirFor(charId), name));
-            all.push({ charId, chatId: name.slice(0, -6), updated: stat.mtimeMs, charName: c.card?.data?.name || '', avatar: c.avatar || null });
+            all.push({ charId, chatId: name.slice(0, -6), updated: stat.mtimeMs, charName: c.card?.data?.name || '', avatar: c.avatar || null, banner: !!bannerData(c).banner, charUpdated: c.updated || 0 });
         }
     }
     all.sort((a, b) => b.updated - a.updated);

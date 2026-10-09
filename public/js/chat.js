@@ -350,7 +350,7 @@ async function moreMenu(id, anchor) {
 export function popMenu(anchor, items) {
     document.querySelector('.ctx-menu')?.remove();
     const menu = el('div', { class: 'ctx-menu popover-menu', role: 'menu' },
-        items.map(([ic, label, fn, cls]) => el('button', {
+        items.filter(Boolean).map(([ic, label, fn, cls]) => el('button', {
             class: `menu-item ${cls || ''}`, onclick: () => { menu.remove(); fn(); },
         }, icon(ic), el('span', {}, label))));
     document.body.append(menu);
@@ -360,14 +360,16 @@ export function popMenu(anchor, items) {
     menu.style.left = `${Math.max(8, Math.min(window.innerWidth - mw - 8, r.right - mw))}px`;
     menu.style.top = `${r.bottom + mh + 8 > window.innerHeight ? Math.max(8, r.top - mh - 6) : r.bottom + 6}px`;
     requestAnimationFrame(() => menu.classList.add('open'));
+    const close = () => {
+        menu.remove();
+        document.removeEventListener('pointerdown', off, true);
+        document.removeEventListener('keydown', onKey, true);
+    };
+    const off = e => { if (!menu.contains(e.target)) close(); };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     setTimeout(() => {
-        const off = e => {
-            if (!menu.contains(e.target)) {
-                menu.remove();
-                document.removeEventListener('pointerdown', off, true);
-            }
-        };
         document.addEventListener('pointerdown', off, true);
+        document.addEventListener('keydown', onKey, true);
     });
 }
 

@@ -1,3 +1,4 @@
+import { backupSection } from '../backup.js';
 import { api } from '../api.js';
 import { state, saveSettingsDebounced, chatMetadata, saveChat } from '../state.js';
 import { printMessages } from '../chat.js';
@@ -30,18 +31,7 @@ export async function render(body) {
             toggle('Colour "quoted" dialogue', r.quotes, v => { r.quotes = v; save(); printMessages(); }),
             field('Python code blocks', select([['button', 'Show a Run button'], ['auto', 'Run automatically'], ['off', 'Just show code']], r.python, v => { r.python = v; save(); printMessages(); }), 'Runs in your browser with Pyodide (≈10 MB download the first time).'),
             field('Pyodide URL', textInput(r.pyodideUrl, v => { r.pyodideUrl = v; save(); }))),
-        section('Backup',
-            el('p', { class: 'hint' }, 'Everything — characters, chats, presets, lorebooks, themes, images, extensions and settings — in one file. API keys are left out.'),
-            el('div', { class: 'row gap wrap' },
-                el('a', { class: 'btn small primary', href: 'api/backup' }, icon('download'), 'Download backup'),
-                el('button', { class: 'btn small', onclick: async () => {
-                    const file = await pickFile('.gz,.tgz,application/gzip');
-                    if (!file) return;
-                    if (!await confirmDialog('Restore this backup? Files with the same names are replaced. Reload afterwards.', { okLabel: 'Restore' })) return;
-                    const res = await api.upload('backup/restore', file);
-                    toast(`Restored ${res.files} files. Reloading…`, 'success');
-                    setTimeout(() => location.reload(), 1200);
-                } }, icon('upload'), 'Restore backup'))),
+        await backupSection(section),
         section('Account',
             el('p', { class: 'hint' }, `Reverie ${info.version || ''} · ${info.auth ? 'password protected' : 'no password set (APP_PASSWORD)'}`),
             info.auth ? el('button', { class: 'btn small', onclick: async () => { await api.post('logout'); location.href = 'login.html'; } }, icon('right-from-bracket'), 'Log out') : null,

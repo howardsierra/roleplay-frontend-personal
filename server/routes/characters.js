@@ -3,7 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { DIRS, listJson, newId, readJson, removeFile, within, writeJson, writeAtomic } from '../lib/storage.js';
 import { isPng, readCardText, writeCardText } from '../lib/png.js';
-import { normalizeCard, placeholderPng, summarize } from '../lib/card.js';
+import { normalizeCard, placeholderPng, summarize, bannerData } from '../lib/card.js';
 
 const router = express.Router();
 const raw = express.raw({ type: () => true, limit: '64mb' });
@@ -42,6 +42,13 @@ async function createFromCard(card, avatarBuf) {
 router.get('/', async (_req, res) => {
     const all = await listJson(DIRS.characters);
     res.json(all.map(x => summarize(x.data)).sort((a, b) => (b.lastChat || b.updated) - (a.lastChat || a.updated)));
+});
+
+// The character's Avatar Banner as an image (it's stored in the card as a data URL), so lists can show it cheaply.
+router.get('/:id/banner', async (req, res) => {
+    const m = String(bannerData(await load(req.params.id)).banner || '').match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
+    if (!m) return res.status(404).end();
+    res.set('Cache-Control', 'private, max-age=31536000, immutable').type(m[1]).send(Buffer.from(m[2], 'base64'));
 });
 
 router.get('/:id', async (req, res) => res.json(await load(req.params.id)));

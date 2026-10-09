@@ -250,6 +250,8 @@ async function boot() {
     import('./recap.js').then(m => m.bindRecap());
     import('./personas.js').then(m => m.bindPersonas());
     import('./avatar-banner.js').then(m => m.bindAvatarBanner());
+    import('./persona-switch.js').then(m => m.bindPersonaSwitch());
+    setTimeout(() => import('./backup.js').then(m => m.backupReminder()), 8000);
     import('./persona-manager/index.js').then(m => m.initPersonaManager());
     $id('btn-persona').addEventListener('click', () => {
         closeAllDrawers();

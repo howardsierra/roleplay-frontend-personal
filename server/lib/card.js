@@ -36,8 +36,13 @@ export function summarize(character) {
         created: character.created,
         updated: character.updated,
         lastChat: character.lastChat || null,
+        banner: !!bannerData(character).banner,
+        accent: bannerData(character).accentColor || null,
     };
 }
+
+/** Avatar Banner data stored in the card (SillyTavern-AvatarBanner's format). */
+export const bannerData = character => character?.card?.data?.extensions?.['SillyTavern-AvatarBanner'] || {};
 
 // A soft gradient PNG used as the avatar for characters created without one
 // (and as the carrier image when exporting a card as PNG).
