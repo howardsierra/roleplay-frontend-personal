@@ -46,12 +46,7 @@ export async function renderRecent() {
                 el('span', { class: 'story-preview' }, item.preview || '—'))),
             el('button', { class: 'story-del', title: 'Delete this chat', onclick: async () => {
                 if (!await confirmDialog(`Delete “${item.chatId}”?`, { okLabel: 'Delete', danger: true })) return;
-                await api.del(`chats/${encodeURIComponent(item.charId)}/${encodeURIComponent(item.chatId)}`);
-                if (active) {
-                    const { openCharacter } = await import('./characters.js');
-                    state.chatId = null;
-                    await openCharacter(item.charId);
-                }
+                await (await import('./characters.js')).deleteChat(item.charId, item.chatId);
                 renderRecent();
             } }, icon('trash-can')));
     }));
@@ -365,6 +360,8 @@ function bindSheet() {
         if (kind === 'composerButtons' || kind === 'menuItems') renderExtensionUi();
     });
     $id('btn-sheet').addEventListener('click', () => {
+        // The sheet shows the open character; on Home there is none (and the panel is hidden there).
+        if (!state.character) return;
         const open = wide(SHEET_DOCK) ? !document.body.classList.contains('sheet-docked') : !$id('sheet-panel').classList.contains('open');
         sheetVisible(open);
     });
@@ -378,6 +375,8 @@ function bindSheet() {
     });
     const refresh = () => { if (document.body.classList.contains('sheet-docked') || $id('sheet-panel').classList.contains('open')) renderSheet(); };
     eventSource.on(event_types.CHAT_CHANGED, refresh);
+    // Leaving for Home closes the sheet, so it can't leave the blurred backdrop behind.
+    eventSource.on(event_types.CHAT_CHANGED, id => { if (!id && $id('sheet-panel').classList.contains('open')) closeDrawer('sheet-panel'); });
     eventSource.on(event_types.CHARACTER_EDITED, refresh);
     eventSource.on(event_types.GENERATION_ENDED, () => { if (sheetTab === 'lore') refresh(); });
     window.matchMedia(SHEET_DOCK).addEventListener('change', () => {

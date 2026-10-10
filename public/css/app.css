@@ -1200,7 +1200,7 @@ input.cast-color::-webkit-color-swatch { border: 0; border-radius: 50%; }
 .ts-widget-root[data-theme-studio-widget] { bottom: calc(var(--rv-composer-h, 80px) + 12px) !important; }
 
 /* ---------- Home ---------- */
-body.no-character #btn-home { display: none; }
+body.no-character #btn-home, body.no-character #btn-sheet { display: none; }
 .sidebar-brand { cursor: pointer; }
 .home-section { max-width: 1100px; margin: 0 auto 28px; }
 .home-hero h1#home-greeting { font-size: clamp(34px, 6.5vw, 56px); }
@@ -1427,7 +1427,6 @@ body.no-character #rv-ambient, body.no-character #rv-ambient-fx { opacity: 0; }
 
 /* ---------------------------------------------------------------- persona manager (native port) */
 /* While it's open, floating extension widgets attached to <body> step aside. */
-body:has(> #pm_modal:not(.pm_hidden)) > :not(#bg_layer, #app, #left-nav-panel, #sheet-panel, #right-nav-panel, #scrim, #toast-container, #modal-root, #pm_modal, #rv-ambient, .modal-wrap, .ctx-menu, script, template, style, link) { visibility: hidden !important; }
 #pm_modal .pm_panel { backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 16px)) saturate(140%); -webkit-backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 10px) + 16px)) saturate(140%); }
 #pm_modal .pm_backdrop { backdrop-filter: blur(3px); }
 .persona-manager-settings .pm_settings_card { margin-top: 0; }
@@ -1501,9 +1500,6 @@ body.has-panel-banner .sheet-panel #sheet-body { overflow-x: hidden; }
 .backup-mode span { display: flex; flex-direction: column; gap: 2px; }
 .backup-mode small { color: var(--rv-text-dim); }
 .backup-mode input { margin-top: 3px; }
-/* On phones, an open drawer comes first: overlays extensions attach to <body> (e.g. Context Lens) step aside. */
-body:has(#modal-root .modal-wrap) > :not(#bg_layer, #app, #left-nav-panel, #sheet-panel, #right-nav-panel, #scrim, #toast-container, #modal-root, #pm_modal, #rv-ambient, .modal-wrap, .ctx-menu, .persona-switch-pop, script, template, style, link) { visibility: hidden !important; }
-@media (max-width: 760px) {
-    body:has(.drawer.open) > :not(#bg_layer, #app, #left-nav-panel, #sheet-panel, #right-nav-panel, #scrim, #toast-container, #modal-root, #pm_modal, #rv-ambient, .modal-wrap, .ctx-menu, .persona-switch-pop, script, template, style, link),
-    body:has(#extensionsMenu:not(.hidden)) > :not(#bg_layer, #app, #left-nav-panel, #sheet-panel, #right-nav-panel, #scrim, #toast-container, #modal-root, #pm_modal, #rv-ambient, .modal-wrap, .ctx-menu, .persona-switch-pop, script, template, style, link) { visibility: hidden !important; }
-}
+/* Overlays that were already on screen when a popup, the Persona Manager or (on phones) a drawer or the
+   ✨ menu opened step aside; anything opened from inside it stays visible. See js/step-aside.js. */
+[data-rv-step-aside] { visibility: hidden !important; }
