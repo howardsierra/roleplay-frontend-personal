@@ -121,6 +121,9 @@ async function activeBooks() {
     // The persona's lorebook (SillyTavern's persona_description_lorebook).
     const personaBook = (state.settings.personas || []).find(p => p.id === state.settings.personaId)?.st?.lorebook;
     if (personaBook) for (const w of list) if (w.name === personaBook) ids.add(w.id);
+    // This story's own lorebook (written by the Lorebook Keeper agent).
+    const storyBook = state.chatMeta?.chat_metadata?.rv_agents?.loreBookId;
+    if (storyBook && list.some(w => w.id === storyBook)) ids.add(storyBook);
     for (const id of ids) {
         try { books.push(await loadWorld(id)); } catch { /* deleted */ }
     }

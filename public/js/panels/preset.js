@@ -53,7 +53,7 @@ export async function render(body) {
     body.append(el('div', { class: 'row gap sticky-bar' }, picker, navBtn, moreBtn));
 
     // ----- Prompt variables (Lumiverse) -----
-    const varBlocks = p.blocks.filter(b => b.variables?.length);
+    const varBlocks = p.blocks.filter(b => b.variables?.length && b.enabled !== false);
     if (varBlocks.length) body.append(section('Preset options', ...varBlocks.flatMap(b => b.variables.map(def => variableControl(p, b, def)))));
 
     // ----- Samplers -----
@@ -263,7 +263,7 @@ function numberInput(value, onChange, attrs = {}) {
     return input;
 }
 
-function variableControl(p, block, def) {
+export function variableControl(p, block, def) {
     p.promptVariables[block.id] ??= {};
     const store = p.promptVariables[block.id];
     const value = store[def.name] ?? def.defaultValue;
@@ -387,6 +387,7 @@ async function editBlock(p, block, refresh) {
                         el('br'), "Operators: == != > < >= <= · ~ (contains, or /regex/) · has · and / or / not · ( )",
                         el('br'), "Examples: model ~ 'claude' · type != 'impersonate' · var.tone == 'dark' · not var.nsfw")));
         })(),
+        structural ? null : variablesEditor(draft),
         el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Only for generation types (none = all)'),
             el('div', { class: 'chip-row' }, triggers.map(t => {
                 const chip = el('button', { class: `chip toggle-chip${draft.injectionTrigger.includes(t) ? ' active' : ''}`, onclick: () => {
@@ -500,4 +501,82 @@ async function importFlow() {
         }
     }
     rerender();
+}
+
+// ---------------------------------------------------------------- prompt variables (authoring)
+const VAR_TYPES = [['text', 'Text'], ['textarea', 'Text area'], ['number', 'Number'], ['slider', 'Slider'], ['select', 'Dropdown'], ['switch', 'On / off'], ['multiselect', 'Multi-select']];
+const varId = () => Math.random().toString(36).slice(2, 10);
+
+/** The block editor's "Prompt variables" section: settings this block exposes to users as {{var::name}}. */
+function variablesEditor(draft) {
+    draft.variables ??= [];
+    const list = el('div', { class: 'stack var-list' });
+    const paint = () => list.replaceChildren(...draft.variables.map((def, i) => el('div', { class: 'var-row' },
+        el('code', {}, `{{var::${def.name}}}`), el('span', { class: 'grow' }, def.label || def.name, el('small', { class: 'hint' }, ` · ${VAR_TYPES.find(t => t[0] === def.type)?.[1] || def.type}`)),
+        el('button', { class: 'icon-btn small', title: 'Edit', onclick: async () => { const next = await editVariable(def, draft); if (next) { draft.variables[i] = next; paint(); } } }, icon('pen')),
+        el('button', { class: 'icon-btn small danger', title: 'Remove', onclick: () => { draft.variables.splice(i, 1); paint(); } }, icon('xmark')))));
+    paint();
+    return el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Prompt variables'),
+        el('small', { class: 'hint' }, 'Settings this prompt exposes to whoever uses the preset — shown under “Preset options” and in the ✨ menu. Write {{var::name}} in the content where the value goes.'),
+        list,
+        el('button', { class: 'btn small', onclick: async () => {
+            const def = await editVariable({ name: '', label: '', type: 'select', options: [], defaultValue: '' }, draft);
+            if (def) { draft.variables.push(def); paint(); }
+        } }, icon('plus'), 'Add variable'));
+}
+
+async function editVariable(original, block) {
+    const def = structuredClone(original);
+    def.options ??= [];
+    const body = el('div', { class: 'stack' });
+    const paint = () => {
+        const needsRange = def.type === 'slider' || def.type === 'number';
+        const hasOptions = def.type === 'select' || def.type === 'multiselect';
+        const options = el('div', { class: 'stack' }, def.options.map((o, i) => el('div', { class: 'var-option' },
+            textInput(o.label, v => { o.label = v; }, { placeholder: 'Label (shown)' }),
+            textArea(o.value, v => { o.value = v; }, { rows: 2, placeholder: 'Text put into the prompt' }),
+            el('button', { class: 'icon-btn small danger', title: 'Remove', onclick: () => { def.options.splice(i, 1); paint(); } }, icon('xmark')))));
+        let defaultInput;
+        if (hasOptions && def.type === 'select') defaultInput = select([['', '(first option)'], ...def.options.map(o => [o.id, o.label || o.id])], def.defaultValue ?? '', v => { def.defaultValue = v; });
+        else if (def.type === 'switch') defaultInput = select([[0, 'Off'], [1, 'On']], Number(def.defaultValue) ? 1 : 0, v => { def.defaultValue = Number(v); });
+        else if (def.type !== 'multiselect') defaultInput = textInput(def.defaultValue ?? '', v => { def.defaultValue = needsRange ? Number(v) : v; });
+        body.replaceChildren(...[
+            el('div', { class: 'grid-2' },
+                field('Name (used in {{var::name}})', textInput(def.name, v => { def.name = v.replace(/[^\w]/g, '_'); }, { placeholder: 'tone' })),
+                field('Label', textInput(def.label, v => { def.label = v; }, { placeholder: 'Writing tone' }))),
+            field('Type', select(VAR_TYPES, def.type, v => { def.type = v; if (v === 'switch') def.defaultValue = 0; paint(); })),
+            field('Description (optional)', textInput(def.description || '', v => { def.description = v; })),
+            needsRange ? el('div', { class: 'grid-2' },
+                field('Min', textInput(def.min ?? '', v => { def.min = v === '' ? undefined : Number(v); })),
+                field('Max', textInput(def.max ?? '', v => { def.max = v === '' ? undefined : Number(v); }))) : null,
+            needsRange ? field('Step', textInput(def.step ?? 1, v => { def.step = Number(v) || 1; })) : null,
+            def.type === 'textarea' ? field('Rows', textInput(def.rows ?? 3, v => { def.rows = Number(v) || 3; })) : null,
+            hasOptions ? el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Options'), options,
+                el('button', { class: 'btn small', onclick: () => { def.options.push({ id: varId(), label: '', value: '' }); paint(); } }, icon('plus'), 'Add option')) : null,
+            def.type === 'multiselect' ? field('Join chosen options with', textInput((def.separator ?? '\n\n').replace(/\n/g, '\\n'), v => { def.separator = v.replace(/\\n/g, '\n'); })) : null,
+            defaultInput ? field('Default', defaultInput) : null,
+        ].filter(Boolean));
+    };
+    paint();
+    const ok = await modal({ title: original.name ? `Variable: ${original.name}` : 'New variable', content: body, wide: true, buttons: [{ label: 'Cancel', value: false }, { label: 'Save', value: true, primary: true, icon: 'check' }] });
+    if (!ok) return null;
+    if (!def.name) { toast('Give the variable a name', 'warning'); return null; }
+    if ((block.variables || []).some(v => v !== original && v.name === def.name)) { toast(`There's already a variable called ${def.name} in this prompt`, 'warning'); return null; }
+    if (def.type === 'select' && !def.defaultValue && def.options[0]) def.defaultValue = def.options[0].id;
+    if (def.type === 'multiselect') def.defaultValue = Array.isArray(def.defaultValue) ? def.defaultValue : [];
+    if (def.type === 'slider') { def.min ??= 0; def.max ??= 10; }
+    return def;
+}
+
+/** ✨ menu → Preset options: the active preset's variables, without opening the preset panel. */
+export async function showPresetOptions() {
+    const p = state.preset;
+    const blocks = (p?.blocks || []).filter(b => b.variables?.length && b.enabled !== false);
+    if (!blocks.length) return toast('This preset has no options. Add variables to a prompt block (Settings → Preset → edit a block).', 'info', { timeout: 5000 });
+    p.promptVariables ??= {};
+    await modal({
+        title: `${p.name} — options`,
+        content: el('div', { class: 'stack' }, ...blocks.flatMap(b => b.variables.map(def => variableControl(p, b, def)))),
+        buttons: [{ label: 'Done', value: true, primary: true }],
+    });
 }

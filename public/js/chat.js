@@ -255,6 +255,32 @@ export async function swipeRight() {
     if (!mes || mes.is_user || state.generating) return;
     if (mes.swipes && (mes.swipe_id ?? 0) < mes.swipes.length - 1) return swipeTo(id, mes.swipe_id + 1);
     if (id === 0 && !state.chat.some(m => m.is_user)) return; // greeting with no more alternates
+    if (state.settings.generation.askOnRegenerate) return regenerateWithNote();
+    return generate('swipe');
+}
+
+/**
+ * Reroll the last reply, telling the AI what to change ("too long", "she wouldn't say that").
+ * The note only goes into this one regeneration.
+ */
+let skipSwipeClickUntil = 0;
+let noteDialogOpen = false;
+export async function regenerateWithNote() {
+    const id = state.chat.length - 1;
+    const mes = state.chat[id];
+    if (!mes || mes.is_user || noteDialogOpen) return;
+    if (state.generating) return toast('Wait for the current reply to finish', 'info', { timeout: 2000 });
+    const { promptDialog } = await import('./ui.js');
+    noteDialogOpen = true;
+    const note = await promptDialog('What should be different this time?', '', {
+        title: 'Regenerate with a note', multiline: true, placeholder: 'e.g. shorter · more tension · she wouldn\'t forgive him that fast · describe the room',
+    });
+    noteDialogOpen = false;
+    if (note === null || note === undefined) return;
+    if (String(note).trim()) {
+        const { oneShot } = await import('./agents/core.js');
+        oneShot('rv_regen_note', `[OOC: The previous attempt at this reply was rejected. Write it again, and this time: ${String(note).trim()}]`);
+    }
     return generate('swipe');
 }
 
@@ -282,8 +308,30 @@ async function editMessage(id) {
         updateMessageBlock(id);
         if (save) await eventSource.emit(event_types.MESSAGE_UPDATED, id);
     };
+    // Edit and send: for your own messages, resend from here. With replies after it, that happens in a
+    // new branch so the original chat is kept as it was.
+    const later = mes.is_user && id < state.chat.length - 1;
+    const resend = mes.is_user ? el('button', {
+        class: 'btn small', title: later ? 'Make a new branch with this edit and get a fresh reply — the original chat stays as it was' : 'Save and get a reply',
+        onclick: async () => {
+            if (state.generating) return;
+            const text = applyRegex(editor.value, REGEX_PLACEMENT.USER_INPUT, { isEdit: true });
+            if (!later) {
+                await done(true);
+                return generate('normal');
+            }
+            await done(false);
+            const edited = { ...structuredClone(mes), mes: text, swipes: undefined, swipe_id: undefined, swipe_info: undefined, send_date: nowDate() };
+            delete edited.swipes; delete edited.swipe_id; delete edited.swipe_info;
+            const { newChat } = await import('./characters.js');
+            await newChat({ messages: [...structuredClone(state.chat.slice(0, id)), edited] });
+            toast('Branched with your edit — the original chat is untouched', 'success', { timeout: 3500 });
+            await generate('normal');
+        },
+    }, icon(later ? 'code-branch' : 'paper-plane'), later ? 'Branch & send' : 'Save & send') : null;
     const bar = el('div', { class: 'edit-bar' },
         el('button', { class: 'btn small', onclick: () => done(false) }, icon('xmark'), 'Cancel'),
+        resend,
         el('button', { class: 'btn small primary', onclick: () => done(true) }, icon('check'), 'Save'));
     textEl.classList.add('hidden');
     textEl.after(editor, bar);
@@ -330,6 +378,7 @@ async function moreMenu(id, anchor) {
             await saveChat();
         }],
         hasHistory(mes) ? ['clock-rotate-left', 'Edit history', () => openHistory(id)] : null,
+        !mes.is_user && id === state.chat.length - 1 ? ['comment-dots', 'Regenerate with a note…', () => regenerateWithNote()] : null,
         ['code-branch', 'Branch from here', () => import('./characters.js').then(m => m.branchChat(id))],
         mes.is_user ? null : ['magnifying-glass-chart', 'Inspect prompt', () => showInspector({ mesKey: captureKey(messageId(state.chat[id]), state.chat[id]?.swipe_id), gen: state.chat[id]?.extra?.gen })],
         mes.swipes?.length > 1 ? ['delete-left', 'Delete this swipe', () => deleteSwipe(id)] : null,
@@ -384,6 +433,28 @@ export function bindChatEvents() {
         stickToBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 80;
     }, { passive: true });
 
+    // Long-press (or right-click) the new-reply arrow to regenerate with a note.
+    let holdTimer = 0;
+    let held = false;
+    root.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || !e.target.closest('.swipe_right')) return;
+        held = false;
+        clearTimeout(holdTimer);
+        holdTimer = setTimeout(() => { held = true; regenerateWithNote(); }, 550);
+    });
+    const holdEnd = () => {
+        clearTimeout(holdTimer);
+        if (held) skipSwipeClickUntil = Date.now() + 500; // the click that ends a long-press
+        held = false;
+    };
+    for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) root.addEventListener(ev, holdEnd);
+    root.addEventListener('contextmenu', e => {
+        if (!e.target.closest('.swipe_right')) return;
+        e.preventDefault();
+        clearTimeout(holdTimer);
+        regenerateWithNote(); // ignored if the long-press already opened it
+    });
+
     root.addEventListener('click', async e => {
         const mesNode = e.target.closest('.mes');
         if (!mesNode) return;
@@ -404,7 +475,10 @@ export function bindChatEvents() {
             return;
         }
         if (btn.classList.contains('swipe_left')) return swipeLeft();
-        if (btn.classList.contains('swipe_right')) return swipeRight();
+        if (btn.classList.contains('swipe_right')) {
+            if (Date.now() < skipSwipeClickUntil) return; // the long-press already opened the note
+            return swipeRight();
+        }
         const mes = state.chat[id];
         switch (btn.dataset.act) {
             case 'copy':
