@@ -116,6 +116,8 @@ oauthRouter.get('/:id/callback', async (req, res) => {
 /** Lumiverse URL shapes some extensions hardcode. */
 export const lumiverseAliases = express.Router();
 lumiverseAliases.get('/system/info', (_req, res) => res.json({ backend: { version: HOST_VERSION }, frontend: { version: HOST_VERSION }, host: 'reverie' }));
+// Lumiverse app settings some extensions read for optional defaults; Reverie keeps its own, so there are none to share.
+lumiverseAliases.get('/settings/imageGeneration', (_req, res) => res.json({ key: 'imageGeneration', value: {} }));
 lumiverseAliases.get(['/images/:id', '/image-gen/results/:id'], (req, res, next) => {
     // Gallery images first, then character avatars (a character's image_id is its avatar file).
     const name = safeName(req.params.id);

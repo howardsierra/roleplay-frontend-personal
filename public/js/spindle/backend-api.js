@@ -163,6 +163,8 @@ const chatsApi = {
 async function loadCharacter(id) {
     if (!id) return null;
     if (state.character?.id === id) return state.character;
+    // Extensions pass placeholders like "_none"; only ask the server about characters that exist.
+    if (state.characters?.length && !state.characters.some(c => c.id === id)) return null;
     return api.get(`characters/${encodeURIComponent(id)}`).catch(() => null);
 }
 
