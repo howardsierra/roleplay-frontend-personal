@@ -21,3 +21,14 @@ self.addEventListener('fetch', event => {
             .catch(() => caches.match(event.request)),
     );
 });
+
+// Tapping a "replied" notification brings Reverie back to the front (or opens it).
+self.addEventListener('notificationclick', event => {
+    event.notification.close();
+    event.waitUntil((async () => {
+        const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        const open = all.find(c => new URL(c.url).origin === location.origin);
+        if (open) return open.focus();
+        return self.clients.openWindow('./');
+    })());
+});

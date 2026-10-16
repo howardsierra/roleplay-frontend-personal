@@ -53,6 +53,13 @@ export async function renderHome() {
             el('div', { class: 'home-story-meta' }, icon('clock'), ` ${timeAgo(item.updated)} · ${item.count ?? 0} messages`),
             el('div', { class: 'home-story-chat' }, chatTitle(item)),
             el('div', { class: 'home-story-preview' }, item.preview || '…')))));
+    requestAnimationFrame(markCarouselEnd);
+}
+
+/** Fade the carousel's right edge only while there's more to scroll. */
+function markCarouselEnd() {
+    const strip = $id('home-stories');
+    if (strip) strip.classList.toggle('at-end', strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 8);
 }
 
 export function bindHome() {
@@ -64,4 +71,6 @@ export function bindHome() {
     $id('btn-home')?.addEventListener('click', goHome);
     document.querySelector('.sidebar-brand')?.addEventListener('click', goHome);
     $id('home-search')?.addEventListener('input', async () => (await import('./characters.js')).renderLibrary());
+    $id('home-stories')?.addEventListener('scroll', markCarouselEnd, { passive: true });
+    addEventListener('resize', markCarouselEnd);
 }

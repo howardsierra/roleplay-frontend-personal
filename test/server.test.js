@@ -39,3 +39,13 @@ test('Claude conversion: OpenAI-style image parts become Anthropic image blocks'
     assert.equal(messages.length, 1);
     assert.deepEqual(messages[0].content[1], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } });
 });
+
+test('Search snippets centre on the match and cut at word boundaries', async () => {
+    const { searchSnippet } = await import('../server/routes/chats.js');
+    const text = 'Elara glances up from the ancient tome, candlelight dancing across her silver hair. "Ah, a visitor at this hour? How delightfully unexpected." She closes the book with a soft thud and gestures to the chair across from her.';
+    const s = searchSnippet(text, 'silver');
+    assert.ok(s.includes('silver hair'));
+    assert.ok(s.startsWith('…') && !s.startsWith('…lara'), s); // never starts mid-word
+    assert.ok(s.endsWith('…'));
+    assert.equal(searchSnippet('Short line.', 'short'), 'Short line.');
+});

@@ -396,11 +396,13 @@ async function moreMenu(id, anchor) {
     popMenu(anchor, items);
 }
 
+let closeOpenMenu = null;
 export function popMenu(anchor, items) {
+    closeOpenMenu?.();
     document.querySelector('.ctx-menu')?.remove();
     const menu = el('div', { class: 'ctx-menu popover-menu', role: 'menu' },
         items.filter(Boolean).map(([ic, label, fn, cls]) => el('button', {
-            class: `menu-item ${cls || ''}`, onclick: () => { menu.remove(); fn(); },
+            class: `menu-item ${cls || ''}`, onclick: () => { close(); fn(); },
         }, icon(ic), el('span', {}, label))));
     document.body.append(menu);
     const r = anchor.getBoundingClientRect();
@@ -409,11 +411,15 @@ export function popMenu(anchor, items) {
     menu.style.left = `${Math.max(8, Math.min(window.innerWidth - mw - 8, r.right - mw))}px`;
     menu.style.top = `${r.bottom + mh + 8 > window.innerHeight ? Math.max(8, r.top - mh - 6) : r.bottom + 6}px`;
     requestAnimationFrame(() => menu.classList.add('open'));
-    const close = () => {
+    // Every way of closing (item picked, tap outside, Esc, another menu) removes the listeners too;
+    // a leftover Esc listener would swallow the next Esc meant for a dialog.
+    function close() {
         menu.remove();
         document.removeEventListener('pointerdown', off, true);
         document.removeEventListener('keydown', onKey, true);
-    };
+        if (closeOpenMenu === close) closeOpenMenu = null;
+    }
+    closeOpenMenu = close;
     const off = e => { if (!menu.contains(e.target)) close(); };
     const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     setTimeout(() => {

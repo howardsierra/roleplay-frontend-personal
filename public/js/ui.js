@@ -192,7 +192,10 @@ export function closeAllDrawers() {
     for (const node of [...drawers]) closeDrawer(node.id);
 }
 
-export const isMobile = () => window.matchMedia('(max-width: 820px)').matches || /Android|iPhone|iPad/i.test(navigator.userAgent);
+// Phones, plus touch-first tablets (iPadOS reports itself as a Mac, so look at the pointer too).
+export const isMobile = () => window.matchMedia('(max-width: 820px)').matches
+    || window.matchMedia('(hover: none) and (pointer: coarse)').matches
+    || /Android|iPhone|iPad/i.test(navigator.userAgent);
 
 export function debounce(fn, ms = 300) {
     let t;

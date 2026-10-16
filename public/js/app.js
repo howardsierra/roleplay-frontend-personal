@@ -30,6 +30,8 @@ function coreActions() {
         ['image', 'Image studio', () => openImageStudio('free')],
         ['clapperboard', 'Previously on… (recap)', () => import('./recap.js').then(m => m.showRecap({ force: true }))],
         ['comments', 'Chats', showChatList],
+        ['magnifying-glass', 'Search all stories', () => import('./search.js').then(m => m.openGlobalSearch())],
+        ['download', 'Export this chat…', () => import('./export.js').then(m => m.exportMenu($id('options_button')))],
         ['square-plus', 'New chat', newChat],
         ['magnifying-glass-chart', 'Prompt inspector', showPromptPreview],
         ['sliders', 'Preset options…', () => import('./panels/preset.js').then(m => m.showPresetOptions())],
@@ -107,6 +109,7 @@ function bindUi() {
         if (action === 'create-character') createCharacter();
         if (action === 'new-story') newStory();
         if (action === 'gallery') { closeAllDrawers(); openGallery(); }
+        if (action === 'search-all') { closeAllDrawers(); import('./search.js').then(m => m.openGlobalSearch()); }
         if (action === 'open-settings' && target.dataset.tab === 'persona' && state.settings.extension_settings?.aevPersonaManager?.hijackDrawer !== false) {
             closeAllDrawers();
             import('./persona-manager/index.js').then(m => m.openManager());
@@ -157,7 +160,13 @@ function bindUi() {
 
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape') { hideMenu(); closeAllDrawers(); }
-        if (e.target.matches('input, textarea, [contenteditable]')) return;
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+            e.preventDefault();
+            import('./search.js').then(m => m.openGlobalSearch());
+            return;
+        }
+        if (e.target.matches('input, textarea, select, [contenteditable]')) return;
+        if (e.key === '?' && !document.querySelector('.modal-wrap')) { e.preventDefault(); showShortcuts(); return; }
         if (e.key === 'ArrowRight' && state.character && !document.querySelector('.modal-wrap')) swipeRight();
         if (e.key === 'ArrowLeft' && state.character && !document.querySelector('.modal-wrap')) import('./chat.js').then(m => m.swipeLeft());
     });
@@ -168,6 +177,26 @@ function bindUi() {
         window.visualViewport.addEventListener('resize', onResize);
         onResize();
     }
+}
+
+function showShortcuts() {
+    const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+    const mod = mac ? '⌘' : 'Ctrl';
+    const rows = [
+        ['Enter', 'Send (Shift+Enter for a new line; change in Settings → Look)'],
+        ['→ / ←', 'Next / previous swipe on the last reply'],
+        [`${mod} K`, 'Search this chat (Enter / Shift+Enter: next / previous)'],
+        [`${mod} Shift F`, 'Search all stories'],
+        [`${mod} Enter`, 'Save while editing a message'],
+        ['Esc', 'Close menus, panels and dialogs; stop reading aloud'],
+        ['?', 'This list'],
+    ];
+    modal({
+        title: 'Keyboard shortcuts',
+        content: el('div', { class: 'shortcut-list' }, ...rows.map(([k, d]) => el('div', { class: 'shortcut-row' },
+            el('span', { class: 'shortcut-keys' }, ...k.split(' ').map(part => (part === '/' ? ' / ' : el('kbd', {}, part)))),
+            el('span', {}, d)))),
+    });
 }
 
 async function newStory() {
@@ -254,6 +283,9 @@ async function boot() {
     import('./avatar-banner.js').then(m => m.bindAvatarBanner());
     import('./persona-switch.js').then(m => m.bindPersonaSwitch());
     import('./step-aside.js').then(m => m.bindStepAside());
+    import('./tts.js').then(m => m.bindTts());
+    import('./notify.js').then(m => m.bindNotify());
+    import('./context-meter.js').then(m => m.bindContextMeter());
     import('./agents/core.js').then(async core => {
         await import('./agents/builtin.js');
         core.bindAgents();

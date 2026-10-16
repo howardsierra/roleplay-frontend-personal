@@ -154,6 +154,21 @@ serveRouter.get(/^\/scripts\/extensions\/third-party\/([^/]+)\/(.+)$/, async (re
     res.sendFile(file);
 });
 
+// SillyTavern server plugins that some extensions import if present. Reverie has no server plugins,
+// so answer with a stand-in whose calls fail cleanly; the extension's own fallback then takes over.
+// (A real install of the same name is served by the route above instead.)
+const PLUGIN_STUBS = {
+    'SillyTavern-FilesPluginApi/api.js': `const unavailable = async () => { throw new Error('The Files plugin is not available in Reverie'); };
+export const FilesPluginApi = { get: unavailable, put: unavailable, list: unavailable, open: unavailable, watch: unavailable, unwatch: unavailable, delete: unavailable };
+export default FilesPluginApi;
+`,
+};
+serveRouter.get(/^\/scripts\/extensions\/third-party\/(.+)$/, (req, res, next) => {
+    const stub = PLUGIN_STUBS[decodeURIComponent(req.params[0])];
+    if (!stub) return next();
+    res.type('application/javascript').set('Cache-Control', 'no-cache').send(stub);
+});
+
 // Reverie-native extensions are served as-is (they use the rv API, not ST imports).
 serveRouter.get(/^\/rv-extensions\/([^/]+)\/(.+)$/, async (req, res, next) => {
     const base = within(DIRS.extensions, safeName(decodeURIComponent(req.params[0])));

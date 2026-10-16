@@ -70,6 +70,54 @@ router.get('/', async (req, res) => {
     res.json(top);
 });
 
+/** About 180 characters of `plain` around the first `term` (lower-case), cut at word boundaries. */
+export function searchSnippet(plain, term) {
+    const at = Math.max(0, plain.toLowerCase().indexOf(term));
+    let start = Math.max(0, at - 70);
+    if (start > 0) start = plain.indexOf(' ', start) + 1 || start;
+    if (start > at) start = at;
+    let end = Math.min(plain.length, at + term.length + 110);
+    if (end < plain.length) {
+        const space = plain.lastIndexOf(' ', end);
+        if (space > at + term.length) end = space;
+    }
+    return (start ? '…' : '') + plain.slice(start, end).trim() + (end < plain.length ? '…' : '');
+}
+
+// Search every chat for messages containing all the words in ?q= (case-insensitive), newest chats first.
+router.get('/search', async (req, res) => {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (q.length < 2) return res.json({ results: [], total: 0 });
+    const terms = q.split(/\s+/).filter(Boolean).slice(0, 8);
+    const limit = Math.min(200, Number(req.query.limit) || 80);
+    const characters = new Map((await listJson(DIRS.characters)).map(({ data }) => [data.id, data]));
+    const chats = [];
+    for (const [charId, c] of characters) {
+        let names = [];
+        try { names = (await fsp.readdir(dirFor(charId))).filter(n => n.endsWith('.jsonl')); } catch { continue; }
+        for (const name of names) {
+            const stat = await fsp.stat(within(dirFor(charId), name)).catch(() => null);
+            if (stat) chats.push({ charId, chatId: name.slice(0, -6), updated: stat.mtimeMs, charName: c.card?.data?.name || '', avatar: c.avatar || null });
+        }
+    }
+    chats.sort((a, b) => b.updated - a.updated);
+    const results = [];
+    let total = 0;
+    for (const chat of chats) {
+        let messages;
+        try { ({ messages } = parseJsonl(await fsp.readFile(fileFor(chat.charId, chat.chatId), 'utf8'))); } catch { continue; }
+        messages.forEach((m, index) => {
+            const plain = plainPreview(m?.mes, 100000);
+            const lower = plain.toLowerCase();
+            if (!terms.every(t => lower.includes(t))) return;
+            total++;
+            if (results.length >= limit) return;
+            results.push({ ...chat, index, name: m.name || '', isUser: !!m.is_user, date: m.send_date || null, snippet: searchSnippet(plain, terms[0]) });
+        });
+    }
+    res.json({ results, total, terms });
+});
+
 router.get('/:charId', async (req, res) => {
     let names = [];
     try {

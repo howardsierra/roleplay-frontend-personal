@@ -37,7 +37,7 @@ function renderStory(container) {
 const refresh = () => { if (storyBox?.isConnected) renderStory(storyBox); syncComposer(); };
 
 function card(title, ic, ...children) {
-    return el('section', { class: 'story-card' }, el('h4', {}, icon(ic), title), ...children);
+    return el('section', { class: 'agent-card' }, el('h4', {}, icon(ic), title), ...children);
 }
 
 function directorCard() {

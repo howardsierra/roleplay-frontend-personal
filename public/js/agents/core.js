@@ -156,9 +156,11 @@ function due(id, every) {
 const markRun = id => { agentStore(id).lastRunAt = state.chat.filter(m => !m.is_system).length; };
 
 let postChain = Promise.resolve();
+/** 'rv_reply_final' (index, type): the reply is in its final form, after any agent that rewrites it. */
+const replyFinal = (targetId, type) => eventSource.emit('rv_reply_final', targetId, type);
 async function runPost(targetId, type) {
     const mes = state.chat[targetId];
-    if (!mes || mes.is_user || !state.chatId) return;
+    if (!mes || mes.is_user || !state.chatId) return replyFinal(targetId, type);
     const ctx = { mes, swipeId: mes.swipe_id ?? 0, index: targetId, type, chatId: state.chatId };
     const list = [...agents.values()].filter(a => a.phase === 'post' && isOn(a.id));
     // "first" agents (e.g. the prose rewrite) run before the rest, which then see the final text.
@@ -179,6 +181,7 @@ async function runPost(targetId, type) {
         }
     };
     for (const a of first) await run(a);
+    replyFinal(targetId, type);
     await Promise.all(rest.map(run));
 }
 
