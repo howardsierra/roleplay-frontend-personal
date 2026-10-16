@@ -166,6 +166,7 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
   - plain text;
   - SillyTavern `.jsonl`.
 - **Keyboard shortcuts:** press `?` to see them.
+- **Desktop mode:** *Desktop mode* in the sidebar (or Settings → Look → *Screen mode*) lays Reverie out like on a computer on this device. You get the sidebar and character sheet side by side, and you can pinch to zoom. *Tablet* is a middle size. It's remembered per device.
 
 ## Agents
 

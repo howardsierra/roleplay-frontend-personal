@@ -94,6 +94,13 @@ function liftLaunchers() {
 
 function bindUi() {
     trackComposerHeight();
+    // A mouse wheel scrolls sideways-scrolling tab strips (the character sheet's tabs, etc.).
+    document.addEventListener('wheel', e => {
+        const strip = e.target.closest?.('.tabs');
+        if (!strip || e.deltaX || !e.deltaY || strip.scrollWidth <= strip.clientWidth) return;
+        strip.scrollLeft += e.deltaY;
+        e.preventDefault();
+    }, { passive: false });
     $id('btn-library').addEventListener('click', () => toggleDrawer('left-nav-panel'));
     $id('btn-settings').addEventListener('click', () => openSettings());
     $id('btn-gallery').addEventListener('click', openGallery);
@@ -109,6 +116,7 @@ function bindUi() {
         if (action === 'create-character') createCharacter();
         if (action === 'new-story') newStory();
         if (action === 'gallery') { closeAllDrawers(); openGallery(); }
+        if (action === 'view-mode') import('./view-mode.js').then(m => m.toggleDesktopMode());
         if (action === 'search-all') { closeAllDrawers(); import('./search.js').then(m => m.openGlobalSearch()); }
         if (action === 'open-settings' && target.dataset.tab === 'persona' && state.settings.extension_settings?.aevPersonaManager?.hijackDrawer !== false) {
             closeAllDrawers();
@@ -284,6 +292,7 @@ async function boot() {
     import('./persona-switch.js').then(m => m.bindPersonaSwitch());
     import('./step-aside.js').then(m => m.bindStepAside());
     import('./tts.js').then(m => m.bindTts());
+    import('./view-mode.js').then(m => m.paintNav());
     import('./notify.js').then(m => m.bindNotify());
     import('./context-meter.js').then(m => m.bindContextMeter());
     import('./agents/core.js').then(async core => {

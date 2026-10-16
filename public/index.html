@@ -3,6 +3,25 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+    <script>
+        // Desktop / tablet mode (per device): lay the page out for a wider screen, like "Request desktop site".
+        (function () {
+            var widths = { desktop: 1280, tablet: 900 };
+            var mode = null;
+            try { mode = localStorage.getItem('rv-view-mode'); } catch (e) { /* storage blocked */ }
+            if (!widths[mode]) return;
+            var meta = document.querySelector('meta[name=viewport]');
+            var fit = function () {
+                // Zoom out so the wide layout fits the screen (rotating the device changes the fit).
+                var w = matchMedia('(orientation: landscape)').matches ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+                if (w >= widths[mode]) { meta.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content'); return; }
+                meta.setAttribute('content', 'width=' + widths[mode] + ', initial-scale=' + (w / widths[mode]).toFixed(3) + ', viewport-fit=cover, interactive-widget=resizes-content');
+            };
+            fit();
+            addEventListener('orientationchange', function () { setTimeout(fit, 250); });
+            document.documentElement.setAttribute('data-view-mode', mode);
+        })();
+    </script>
     <meta name="theme-color" content="#0d0b14">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
@@ -144,6 +163,7 @@
                 <button class="nav-item" data-action="open-settings" data-tab="persona"><i class="fa-solid fa-user-astronaut"></i><span>Personas</span></button>
                 <button class="nav-item" data-action="open-settings" data-tab="lore"><i class="fa-solid fa-book-atlas"></i><span>Lorebooks</span></button>
                 <button class="nav-item" data-action="open-settings" data-tab="preset"><i class="fa-solid fa-sliders"></i><span>Presets</span></button>
+                <button class="nav-item" data-action="view-mode" id="nav-view-mode"><i class="fa-solid fa-desktop"></i><span>Desktop mode</span><span class="nav-state"></span></button>
                 <button class="nav-item" data-action="search-all"><i class="fa-solid fa-magnifying-glass"></i><span>Search all stories</span></button>
                 <button class="nav-item" data-action="gallery"><i class="fa-regular fa-images"></i><span>Gallery</span></button>
                 <button class="nav-item" data-action="open-settings" data-tab="connection"><i class="fa-solid fa-plug"></i><span>Connections &amp; settings</span></button>

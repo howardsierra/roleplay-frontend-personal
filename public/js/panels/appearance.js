@@ -6,6 +6,7 @@ import { printMessages } from '../chat.js';
 import { applyBranding } from '../layout.js';
 import { dialogueSettings, refreshDialogueColors, openCastEditor } from '../dialogue-colors.js';
 import { popMenu } from '../chat.js';
+import { VIEW_MODES, viewMode, setViewMode } from '../view-mode.js';
 import { el, icon, field, select, textArea, textInput, toggle, slider, section, toast, pickFile, download, confirmDialog, promptDialog, debounce } from '../ui.js';
 
 let rootBody;
@@ -148,6 +149,8 @@ export async function render(body) {
                 }) }, icon('pen-ruler'), 'Edit theme details') : null),
             field('Light / dark', select([['auto', 'Follow my device'], ['dark', 'Always dark'], ['light', 'Always light']], a.colorScheme || 'auto', v => { a.colorScheme = v; save(); rerender(); }), 'Reverie themes can include both a light and a dark version.')),
         section('Layout',
+            field('Screen mode (this device)', select(VIEW_MODES, viewMode(), v => setViewMode(v)),
+                'Desktop lays Reverie out like on a computer, with the sidebar and character sheet side by side; pinch to zoom on a phone. Also in the sidebar: Desktop mode.'),
             field('Interface layout', select([['reverie', 'Reverie (sidebar, cards, character sheet)'], ['classic', 'SillyTavern classic (for ST interface themes)']], a.layout || 'reverie', v => {
                 a.layout = v;
                 save();
