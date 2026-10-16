@@ -8,6 +8,7 @@ const TABS = [
     { id: 'lore', label: 'Lorebooks', icon: 'book-atlas', load: () => import('./lore.js') },
     { id: 'regex', label: 'Regex', icon: 'code', load: () => import('./regex.js') },
     { id: 'images', label: 'Images', icon: 'palette', load: () => import('./images.js') },
+    { id: 'agents', label: 'Agents', icon: 'robot', load: () => import('./agents.js') },
     { id: 'appearance', label: 'Look', icon: 'brush', load: () => import('./appearance.js') },
     { id: 'extensions', label: 'Extensions', icon: 'puzzle-piece', load: () => import('./extensions.js') },
     { id: 'advanced', label: 'More', icon: 'gear', load: () => import('./advanced.js') },
@@ -36,6 +37,14 @@ export async function showTab(id) {
     }
     current = tab.id;
     document.querySelectorAll('#settings-tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab.id));
+    // Scroll only the tab strip: scrollIntoView would also scroll the page while the drawer slides in.
+    const strip = document.getElementById('settings-tabs');
+    const active = strip?.querySelector(`.tab[data-tab="${tab.id}"]`);
+    if (active) {
+        const left = active.offsetLeft - strip.offsetLeft, right = left + active.offsetWidth;
+        if (left < strip.scrollLeft) strip.scrollLeft = left;
+        else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
+    }
     document.getElementById('settings-title').textContent = tab.label;
     body.replaceChildren(el('div', { class: 'loading-row' }, el('span', { class: 'rv-dots' }, el('span'), el('span'), el('span'))));
     const mod = await tab.load();

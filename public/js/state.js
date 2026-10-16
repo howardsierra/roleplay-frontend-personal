@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS = {
         preferCharInstructions: true,
         maxContextOverride: null,
         trimIncomplete: false,
+        askOnRegenerate: false, // ask "what should change?" before every regenerate
     },
     render: {
         html: true,

@@ -23,6 +23,7 @@ function coreActions() {
     const menu = $id('core-actions-menu');
     const items = [
         ['rotate', 'Regenerate', () => (state.chat.at(-1)?.is_user ? generate('normal') : swipeRight())],
+        ['comment-dots', 'Regenerate with a note…', () => import('./chat.js').then(m => m.regenerateWithNote())],
         ['forward', 'Continue', () => generate('continue')],
         ['user-pen', 'Write for me (impersonate)', () => generate('impersonate')],
         ['wand-magic-sparkles', 'Illustrate the scene', () => openImageStudio('scene')],
@@ -31,6 +32,7 @@ function coreActions() {
         ['comments', 'Chats', showChatList],
         ['square-plus', 'New chat', newChat],
         ['magnifying-glass-chart', 'Prompt inspector', showPromptPreview],
+        ['sliders', 'Preset options…', () => import('./panels/preset.js').then(m => m.showPresetOptions())],
         ['note-sticky', "Author's note", () => openSettings('advanced')],
         ['palette', 'Cast colors', openCastEditor],
     ];
@@ -252,6 +254,11 @@ async function boot() {
     import('./avatar-banner.js').then(m => m.bindAvatarBanner());
     import('./persona-switch.js').then(m => m.bindPersonaSwitch());
     import('./step-aside.js').then(m => m.bindStepAside());
+    import('./agents/core.js').then(async core => {
+        await import('./agents/builtin.js');
+        core.bindAgents();
+        (await import('./agents/ui.js')).bindAgentUi();
+    });
     setTimeout(() => import('./backup.js').then(m => m.backupReminder()), 8000);
     import('./persona-manager/index.js').then(m => m.initPersonaManager());
     $id('btn-persona').addEventListener('click', () => {

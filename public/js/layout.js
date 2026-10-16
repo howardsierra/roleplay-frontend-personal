@@ -333,7 +333,8 @@ function renderSheetTabs() {
     const nav = $id('sheet-tabs');
     nav.querySelectorAll('.tab.ext-tab').forEach(n => n.remove());
     const anchor = nav.querySelector('.grow');
-    for (const t of points.sheetTabs.list()) {
+    // Reverie's own tabs (e.g. Story) come before extension tabs.
+    for (const t of points.sheetTabs.list().sort((a, b) => !!b.builtin - !!a.builtin)) {
         const ic = t.iconSvg ? el('span', { class: 'rvext-svg', html: t.iconSvg }) : t.iconUrl ? el('img', { class: 'rvext-svg', src: t.iconUrl, alt: '' }) : t.icon ? icon(t.icon) : null;
         anchor.before(el('button', { class: 'tab ext-tab', 'data-tab': t.id, title: t.title }, ic, el('span', {}, t.shortName || t.title)));
     }

@@ -145,6 +145,34 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 - **Scene lighting** — the room's light shifts with the story. The toolbar chip shows the current scene; tap it to pin one or turn it off for that chat. Strength and on/off are in **Look**.
 - **Previously on…** — come back to a story after 6+ hours and a short recap of where things stand appears under the last message (written once and cached). ✨ menu → *Previously on…* writes one any time.
 
+## Agents
+
+Agents are small helper AIs that run around your replies. The idea comes from Marinara Engine's agents and Lumiverse's Council; the prompts are Reverie's own.
+
+**Switching them on**
+- Per story: the character sheet's **Story** tab.
+- What new stories start with: **Settings → Agents**. That tab is also where you give agents their own (cheaper) model, picked from your connection profiles, and set each agent's options.
+- A small chip in the toolbar shows which agents are working.
+
+**The agents**
+
+| Agent | What it does |
+|---|---|
+| Narrative Director | A 🧭 *Push story* button by the message box: advance the current threads, or a random event. If you've typed a message, it's sent along with the push. |
+| Secret Plot | Keeps a hidden long-term arc (arc, your arc, next beats, a twist) and quietly steers toward it. Peek at it and edit it in the Story tab; your edits are kept until you ask it to rethink. |
+| Prose Guardian | Rewrites each reply to remove banned words, clichés and repetition. The raw reply can stay blurred until the polish is done, and the original is kept in the message's edit history. |
+| Continuity Checker | Lists slips under the reply (names, clothes, injuries, time…) as a checklist; apply the fixes you tick. |
+| Trackers | The story state in the Story tab: world (date, time, weather, location, who's present), characters, quests, inventory and relationships. Edit anything or lock it so the AI can't change it. Each reply keeps its own snapshot, so swipes and deletions stay consistent, and the state goes into the prompt every reply. |
+| Choices | Tappable "what you do next" options under the newest reply. Tap to send, or ✎ to edit first. |
+| Lorebook Keeper | Every few messages, suggests lore entries for new people, places and facts. You approve them in the Story tab (or let it add them itself), and they go into the story's own lorebook. |
+| Echo Chamber | A pretend live audience reacting in a little floating feed: AO3 readers, Twitter, hype squad, critique partners or harbingers of doom. |
+
+## Regenerate with a note, Edit & Send, preset options
+
+- **Regenerate with a note:** long-press (or right-click) the → arrow, or use *Regenerate with a note…* in the ⋯ and ✨ menus, and say what should change ("shorter", "she wouldn't forgive him that fast"). The note only goes into that one regeneration. Settings → More can ask every time.
+- **Edit & Send:** when editing one of your own messages, *Branch & send* makes a new branch with your edit and gets a fresh reply. The original chat stays as it was. On your last message it's *Save & send*.
+- **Preset options:** any prompt block can expose settings as `{{var::name}}`: text, text area, number, slider, dropdown (short label → long prompt text), on/off or multi-select. Add them in the block editor under *Prompt variables*. Change them from ✨ → *Preset options…* or under Settings → Preset. Variables in Lumiverse presets work the same way.
+
 ## Personas and avatar banners
 
 Two SillyTavern extensions are built in, ported from their own code, and they read the data those extensions saved. Their SillyTavern copies are skipped automatically.
