@@ -37,7 +37,14 @@ export async function showTab(id) {
     }
     current = tab.id;
     document.querySelectorAll('#settings-tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab.id));
-    document.querySelector(`#settings-tabs .tab[data-tab="${tab.id}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    // Scroll only the tab strip: scrollIntoView would also scroll the page while the drawer slides in.
+    const strip = document.getElementById('settings-tabs');
+    const active = strip?.querySelector(`.tab[data-tab="${tab.id}"]`);
+    if (active) {
+        const left = active.offsetLeft - strip.offsetLeft, right = left + active.offsetWidth;
+        if (left < strip.scrollLeft) strip.scrollLeft = left;
+        else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
+    }
     document.getElementById('settings-title').textContent = tab.label;
     body.replaceChildren(el('div', { class: 'loading-row' }, el('span', { class: 'rv-dots' }, el('span'), el('span'), el('span'))));
     const mod = await tab.load();
