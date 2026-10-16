@@ -145,6 +145,28 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 - **Scene lighting** — the room's light shifts with the story. The toolbar chip shows the current scene; tap it to pin one or turn it off for that chat. Strength and on/off are in **Look**.
 - **Previously on…** — come back to a story after 6+ hours and a short recap of where things stand appears under the last message (written once and cached). ✨ menu → *Previously on…* writes one any time.
 
+## Reading, finding and keeping your stories
+
+- **Read aloud:** the 🔊 button in a message's actions reads it with your device's own voices (free and private). Settings → More → *Read aloud* has:
+  - auto-reading new replies;
+  - reading only the "spoken" dialogue;
+  - a voice for each character;
+  - speed and pitch.
+- **When a reply is ready:** while a reply is being written, the screen stays on. If you've switched away, you get:
+  - a "replied" tab title;
+  - a buzz on Android;
+  - optionally, a system notification (on iPhone/iPad, add Reverie to your Home Screen first).
+
+  The settings are in Settings → More.
+- **Context meter:** the ring in the chat toolbar shows how full the model's context was on the last reply. It turns amber at 75% and red at 92%, when the oldest messages start being left out. Tap it for the Prompt Inspector.
+- **Search all stories:** *Search all stories* in the sidebar or ✨ menu, or Ctrl/⌘ Shift F, finds messages across every chat. Tap a result to jump to it.
+- **Export a chat:** use the ⬇ button in the chat list, or ✨ → *Export this chat…*, to download it as:
+  - a readable story (a typeset `.html` page that also prints nicely);
+  - Markdown;
+  - plain text;
+  - SillyTavern `.jsonl`.
+- **Keyboard shortcuts:** press `?` to see them.
+
 ## Agents
 
 Agents are small helper AIs that run around your replies. The idea comes from Marinara Engine's agents and Lumiverse's Council; the prompts are Reverie's own.

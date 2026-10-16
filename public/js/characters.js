@@ -192,7 +192,7 @@ export async function showChatList() {
                         if (c.id === state.chatId) { state.chatId = res.id; updateHeader(); rememberChat(); }
                         render();
                     } }, icon('pen')),
-                    el('a', { class: 'icon-btn', title: 'Export (.jsonl)', href: `api/chats/${encodeURIComponent(charId)}/${encodeURIComponent(c.id)}/export` }, icon('download')),
+                    el('button', { class: 'icon-btn', title: 'Export…', onclick: e => { const b = e.currentTarget; import('./export.js').then(m => m.exportMenu(b, charId, c.id)); } }, icon('download')),
                     el('button', { class: 'icon-btn danger', title: 'Delete', onclick: async () => {
                         if (!await confirmDialog(`Delete chat "${c.id}"?`, { okLabel: 'Delete', danger: true })) return;
                         await deleteChat(charId, c.id);
