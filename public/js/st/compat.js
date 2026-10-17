@@ -850,7 +850,8 @@ export function installCompat() {
     });
 
     for (const ev of [event_types.CHAT_CHANGED, event_types.MESSAGE_RECEIVED, event_types.MESSAGE_SENT, event_types.MESSAGE_DELETED,
-        event_types.SETTINGS_UPDATED, event_types.CHARACTER_EDITED, event_types.PRESET_CHANGED, event_types.GENERATION_STARTED, event_types.GENERATION_ENDED]) {
+        event_types.SETTINGS_UPDATED, event_types.CHARACTER_EDITED, event_types.PRESET_CHANGED, event_types.GENERATION_STARTED, event_types.GENERATION_ENDED,
+        event_types.PERSONA_CHANGED, event_types.PERSONA_UPDATED]) {
         eventSource.on(ev, () => globalThis.__RV_SHIM__.notify());
     }
 }

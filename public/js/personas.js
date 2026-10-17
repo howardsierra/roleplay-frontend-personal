@@ -48,6 +48,8 @@ export async function setActivePersona(id, { quiet = true } = {}) {
     saveSettingsDebounced();
     if (changed) {
         if (!quiet) toast(`You are now ${p.name || 'unnamed'}`, 'info', { timeout: 2200 });
+        const { refreshGreeting } = await import('./characters.js');
+        if (refreshGreeting()) saveChatDebounced();
         await eventSource.emit(event_types.PERSONA_CHANGED, p.id);
         const { printMessages } = await import('./chat.js');
         if (state.character) printMessages();

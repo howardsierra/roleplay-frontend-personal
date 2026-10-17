@@ -201,9 +201,8 @@ const personasApi = {
     async getDefault() { return personaDto(currentPersona()); },
     async switchActive(_ext, id) {
         if (!personaById(id)) throw notFound('Persona');
-        state.settings.personaId = id;
-        saveSettingsDebounced();
-        await eventSource.emit(event_types.PERSONA_CHANGED, id);
+        const { setActivePersona } = await import('../personas.js');
+        await setActivePersona(id);
     },
 };
 

@@ -5,6 +5,13 @@ import { eventSource, event_types } from '../events.js';
 import { printMessages } from '../chat.js';
 import { el, icon, field, textInput, textArea, section, confirmDialog, pickFile, toPngBlob, toast } from '../ui.js';
 
+let editTimer = 0;
+/** After typing in the active persona's name/description: let extensions and on-screen {{user}} catch up. */
+function personaEdited(id) {
+    clearTimeout(editTimer);
+    editTimer = setTimeout(() => { eventSource.emit(event_types.PERSONA_UPDATED, id); if (id === state.settings.personaId) printMessages(); }, 500);
+}
+
 export async function render(body) {
     const s = state.settings;
     if (!s.personas.length) {
@@ -18,10 +25,9 @@ export async function render(body) {
     const renderList = () => {
         list.replaceChildren(...s.personas.map(p => el('button', {
             class: `persona-chip${p.id === s.personaId ? ' active' : ''}`,
-            onclick: () => {
-                s.personaId = p.id;
-                saveSettingsDebounced();
-                eventSource.emit(event_types.PERSONA_CHANGED, p.id);
+            onclick: async () => {
+                const { setActivePersona } = await import('../personas.js');
+                await setActivePersona(p.id);
                 renderList();
                 renderEditor();
                 printMessages();
@@ -32,6 +38,7 @@ export async function render(body) {
             s.personas.push(p);
             s.personaId = p.id;
             saveSettingsDebounced();
+            eventSource.emit(event_types.PERSONA_CHANGED, p.id);
             renderList();
             renderEditor();
         } }, icon('plus'), el('span', {}, 'New')));
@@ -51,8 +58,8 @@ export async function render(body) {
                     saveSettingsDebounced();
                     renderList();
                 } }, img, el('span', { class: 'editor-avatar-hint' }, icon('camera'))),
-                el('div', { class: 'stack grow' }, field('Name', textInput(p.name, v => { p.name = v; saveSettingsDebounced(); renderListDebounced(); })))),
-            field('Description', textArea(p.description, v => { p.description = v; saveSettingsDebounced(); }, { rows: 8, placeholder: 'Who are you in this story? Appearance, personality, background…' }), 'Inserted where the preset has the “Persona Description” marker ({{persona}}).'),
+                el('div', { class: 'stack grow' }, field('Name', textInput(p.name, v => { p.name = v; saveSettingsDebounced(); renderListDebounced(); personaEdited(p.id); })))),
+            field('Description', textArea(p.description, v => { p.description = v; saveSettingsDebounced(); personaEdited(p.id); }, { rows: 8, placeholder: 'Who are you in this story? Appearance, personality, background…' }), 'Inserted where the preset has the “Persona Description” marker ({{persona}}).'),
             el('div', { class: 'field' }, el('span', { class: 'field-label' }, 'Banner'), bannerControls({ kind: 'persona', id: p.id })),
             s.personas.length > 1 ? el('button', { class: 'btn small danger', onclick: async () => {
                 if (!await confirmDialog(`Delete persona “${p.name}”?`, { okLabel: 'Delete', danger: true })) return;
@@ -139,8 +146,12 @@ export async function importSillyTavernPersonas(files) {
         if (avatarKey === src.default_persona) defaultId = persona.id;
     }
     // Remove the empty placeholder persona Reverie creates on first run.
-    if (added) s.personas = s.personas.filter(p => !(p.name === 'You' && !p.description && !p.avatar && !p.stAvatar));
+    // Remove the empty placeholder personas Reverie creates on first run (welcome screen / "You").
+    const placeholder = p => !p.description && !p.avatar && !p.stAvatar && (p.welcome || p.name === 'You' || p.name === 'User');
+    if (added) s.personas = s.personas.filter(p => !placeholder(p));
+    // Become the imported default persona, or the first imported one if you were still the placeholder.
     if (defaultId) s.personaId = defaultId;
+    else if (added && !s.personas.some(p => p.id === s.personaId)) s.personaId = s.personas.find(p => p.stAvatar)?.id ?? s.personaId;
     if (!s.personas.some(p => p.id === s.personaId)) s.personaId = s.personas[0]?.id ?? null;
     saveSettingsDebounced();
     eventSource.emit(event_types.PERSONA_CHANGED, s.personaId);

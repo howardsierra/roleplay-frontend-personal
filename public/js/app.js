@@ -249,9 +249,17 @@ async function welcome() {
         onOpen: () => setTimeout(() => name.focus(), 80),
     });
     const s = state.settings;
-    const persona = { id: crypto.randomUUID(), name: name.value.trim() || 'User', description: '', avatar: '' };
-    s.personas = [persona, ...s.personas.filter(p => p.name !== 'User' || p.description)];
-    s.personaId = persona.id;
+    const typed = name.value.trim();
+    const real = s.personas.filter(p => p.description || p.avatar || p.stAvatar);
+    if (real.length && !typed) {
+        // Personas came with a restored backup or import: keep being one of them.
+        if (!real.some(p => p.id === s.personaId)) s.personaId = real[0].id;
+    } else {
+        // `welcome`: an empty first-run persona, replaced when real personas are imported.
+        const persona = { id: crypto.randomUUID(), name: typed || 'User', description: '', avatar: '', welcome: true };
+        s.personas = [persona, ...s.personas.filter(p => p.name !== 'User' || p.description)];
+        s.personaId = persona.id;
+    }
     s.onboarded = true;
     await saveSettings();
     if (go) openSettings('connection');

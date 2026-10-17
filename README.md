@@ -177,6 +177,7 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
   - Agents and extensions get clean text.
   - Settings → More → *Thinking*.
 - **Regex:** scripts that change the saved message also apply while a reply streams, so hidden blocks don't flash by. "Alter chat display" plus "Alter outgoing prompt" together now applies in both places, as in SillyTavern.
+- **Personas:** `{{user}}`, the persona description and SillyTavern extensions all follow the persona you switch to (Persona Manager, the quick switcher, locks or Lumiverse extensions). A greeting you haven't replied to is rewritten with the new name. Importing SillyTavern personas replaces the empty persona from the welcome screen.
 - **Keyboard shortcuts:** press `?` to see them.
 - **Desktop mode:** *Desktop mode* in the sidebar (or Settings → Look → *Screen mode*) lays Reverie out like on a computer on this device. You get the sidebar and character sheet side by side, and you can pinch to zoom. *Tablet* is a middle size. It's remembered per device.
 
