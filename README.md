@@ -178,6 +178,22 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
   - Settings → More → *Thinking*.
 - **Regex:** scripts that change the saved message also apply while a reply streams, so hidden blocks don't flash by. "Alter chat display" plus "Alter outgoing prompt" together now applies in both places, as in SillyTavern.
 - **Personas:** `{{user}}`, the persona description and SillyTavern extensions all follow the persona you switch to (Persona Manager, the quick switcher, locks or Lumiverse extensions). A greeting you haven't replied to is rewritten with the new name. Importing SillyTavern personas replaces the empty persona from the welcome screen.
+- **Assistant:** like SillyTavern and Marinara Engine, Reverie adds a built-in **Assistant** the first time it runs. It's a helpful chat partner, not a roleplay character, for questions, brainstorming, drafting cards and lore, and settings help. Story agents stay off in its chats unless you switch them on. If you delete it, it stays deleted; *Add the Assistant* in the Characters browser brings it back.
+- **Character edits save as you type.** The editor (and the sheet editor) save whenever they close, whether with Done, ✕, Esc or a tap outside. Partial updates merge on the server, so a banner change or an extension writing to the card can't undo your edits.
+- **Deleting characters:**
+  - right-click (or long-press) any character tile for *Delete…*, along with Open, Edit, Favourite, Duplicate and Export;
+  - the **⋯** button on a character's profile;
+  - **Select** in the Characters browser (👥) to delete several at once;
+  - *Delete character* at the bottom of the editor.
+
+  It always asks first, and deleting the character you're chatting with takes you Home.
+- **Deleting the open chat** takes you Home, instead of opening another chat with the same character.
+- **Streaming:**
+  - Replies appear at a steady pace instead of in bursts (turn off *Smooth streaming* in Look). Long replies stay smooth because redraws space out on slower devices.
+  - A caret shows where the AI is typing, and the status shows the speed ("Writing… 42 t/s").
+  - Scroll up to reread and the reply stops pulling you down; a ↓ button (with a live dot) brings you back.
+  - If the connection drops, what arrived is kept and you're told to use Continue. Stopping before any text leaves no empty reply behind.
+- **Regenerate:** → (or ✨/⋯ → *Regenerate*) rerolls straight away. Long-press → (or *Regenerate with a note…*) offers *Just regenerate* or *Regenerate with note*.
 - **Keyboard shortcuts:** press `?` to see them.
 - **Desktop mode:** *Desktop mode* in the sidebar (or Settings → Look → *Screen mode*) lays Reverie out like on a computer on this device. You get the sidebar and character sheet side by side, and you can pinch to zoom. *Tablet* is a middle size. It's remembered per device.
 

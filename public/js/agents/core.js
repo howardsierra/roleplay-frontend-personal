@@ -43,6 +43,8 @@ export const agentsOff = () => !!chatAgents().off;
 export function isOn(id) {
     if (!state.chatId || agentsOff()) return false;
     const chosen = chatAgents().on[id];
+    // Story agents don't start on by default in chats with the built-in Assistant (it isn't a story).
+    if (chosen === undefined && state.character?.card?.data?.extensions?.reverie?.assistant) return false;
     return chosen ?? !!agentSettings().defaults[id];
 }
 export function setOn(id, on) {

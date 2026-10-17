@@ -20,7 +20,13 @@ const httpError = (status, message) => Object.assign(new Error(message), { statu
 export function resolveBase(provider, baseUrl) {
     const def = CHAT_PROVIDERS[provider];
     if (!def) throw httpError(400, `Unknown provider: ${provider}`);
-    const base = (baseUrl || def.base || '').trim().replace(/\/+$/, '');
+    // Named providers always use their own server (a different URL would receive their stored API key);
+    // a URL on the same host is fine (e.g. a different API path).
+    let wanted = String(baseUrl || '').trim();
+    if (def.base && wanted) {
+        try { if (new URL(wanted).host !== new URL(def.base).host) wanted = ''; } catch { wanted = ''; }
+    }
+    const base = (wanted || def.base || '').trim().replace(/\/+$/, '');
     if (!base) throw httpError(400, 'This connection needs an API URL');
     if (!/^https?:\/\//i.test(base)) throw httpError(400, 'API URL must start with http:// or https://');
     return base;
@@ -74,26 +80,37 @@ export async function listModels({ provider, baseUrl, key }) {
 }
 
 // ---------- SSE parsing ----------
+function parseEvent(block) {
+    let event = 'message';
+    const data = [];
+    for (const line of block.split(/\r?\n/)) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+    }
+    return data.length ? { event, data: data.join('\n') } : null;
+}
+
 async function* sseEvents(body, signal) {
     const decoder = new TextDecoder();
     let buffer = '';
     for await (const chunk of body) {
         if (signal?.aborted) return;
         buffer += decoder.decode(chunk, { stream: true });
-        let idx;
-        while ((idx = buffer.search(/\r?\n\r?\n/)) >= 0) {
-            const block = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + (buffer[idx] === '\r' ? 4 : 2));
-            let event = 'message';
-            const data = [];
-            for (const line of block.split(/\r?\n/)) {
-                if (line.startsWith('event:')) event = line.slice(6).trim();
-                else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
-            }
-            if (data.length) yield { event, data: data.join('\n') };
+        let m;
+        while ((m = buffer.match(/\r?\n\r?\n/))) {
+            const block = buffer.slice(0, m.index);
+            buffer = buffer.slice(m.index + m[0].length);
+            const ev = parseEvent(block);
+            if (ev) yield ev;
         }
     }
+    // Some proxies end without a final blank line: don't drop the last event.
+    buffer += decoder.decode();
+    const last = buffer.trim() && parseEvent(buffer.trim());
+    if (last) yield last;
 }
+
+const endedEarly = () => httpError(502, 'The stream ended before the reply was finished (connection dropped or timed out)');
 
 // ---------- OpenAI-compatible ----------
 function buildOpenAIBody(provider, model, messages, p, stream) {
@@ -116,7 +133,9 @@ function buildOpenAIBody(provider, model, messages, p, stream) {
             set('top_a', p.top_a || undefined);
         }
     }
-    if (Array.isArray(p.stop) && p.stop.length) body.stop = p.stop.slice(0, 4);
+    // OpenAI's reasoning models reject `stop`; other servers take up to four strings.
+    const stops = Array.isArray(p.stop) ? p.stop.filter(s => typeof s === 'string' && s) : [];
+    if (stops.length && !reasoningModel) body.stop = stops.slice(0, 4);
     if (Number.isInteger(p.seed) && p.seed >= 0) body.seed = p.seed;
     if (provider === 'openrouter') {
         if (p.reasoning_effort) body.reasoning = { effort: p.reasoning_effort };
@@ -148,8 +167,9 @@ async function chatOpenAI({ provider, baseUrl, key, model, messages, params, str
     }
     let usage;
     let finish;
+    let done = false;
     for await (const { data } of sseEvents(res.body, signal)) {
-        if (data === '[DONE]') break;
+        if (data === '[DONE]') { done = true; break; }
         let json;
         try { json = JSON.parse(data); } catch { continue; }
         if (json.error) throw httpError(502, json.error.message || JSON.stringify(json.error));
@@ -162,6 +182,8 @@ async function chatOpenAI({ provider, baseUrl, key, model, messages, params, str
         if (typeof delta.content === 'string' && delta.content) onText(delta.content);
         if (choice.finish_reason) finish = choice.finish_reason;
     }
+    // No [DONE] and no finish reason: the reply was cut off, not finished.
+    if (!done && !finish && !signal?.aborted) throw endedEarly();
     return { usage, finish };
 }
 
@@ -237,7 +259,7 @@ async function chatAnthropic({ baseUrl, key, model, messages, params: p, stream,
         else if (p.top_p != null) body.top_p = p.top_p;
         if (p.top_k) body.top_k = p.top_k;
     }
-    if (Array.isArray(p.stop) && p.stop.length) body.stop_sequences = p.stop.filter(s => s.trim());
+    if (Array.isArray(p.stop) && p.stop.length) body.stop_sequences = p.stop.filter(s => typeof s === 'string' && s.trim());
     Object.assign(body, p.custom_body || {});
 
     onRequest?.({ url: `${base}/messages`, body });
@@ -253,6 +275,7 @@ async function chatAnthropic({ baseUrl, key, model, messages, params: p, stream,
     }
     let usage;
     let finish;
+    let stopped = false;
     for await (const { data } of sseEvents(res.body, signal)) {
         let json;
         try { json = JSON.parse(data); } catch { continue; }
@@ -266,7 +289,9 @@ async function chatAnthropic({ baseUrl, key, model, messages, params: p, stream,
             usage = { ...usage, ...json.usage };
             finish = json.delta?.stop_reason;
         }
+        if (json.type === 'message_stop') stopped = true;
     }
+    if (!stopped && !finish && !signal?.aborted) throw endedEarly();
     return { usage, finish };
 }
 

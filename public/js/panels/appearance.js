@@ -170,6 +170,7 @@ export async function render(body) {
                 'Shifts the light to match the story — candlelight, moonlight, storms, snow — from the latest messages. Pin or turn it off per chat from the toolbar.'),
             a.ambient === false ? null : slider('Scene lighting strength', a.ambientIntensity ?? 0.5, { min: 0.1, max: 1, step: 0.05, onChange: v => { a.ambientIntensity = v; saveSettingsDebounced(); import('../ambient.js').then(m => m.applyAmbient()); } }),
             toggle('"Previously on…" recaps', a.recap !== false, v => { a.recap = v; saveSettingsDebounced(); }, 'When you return to a story after 6+ hours, a short recap appears under the last message.'),
+            toggle('Smooth streaming', a.smoothStreaming !== false, v => { a.smoothStreaming = v; saveSettingsDebounced(); }, 'Reveals replies at a steady pace instead of in bursts as they arrive from the AI.'),
             toggle('Show generation details under replies', a.genDetails !== false, v => { a.genDetails = v; saveSettingsDebounced(); printMessages(); }),
             field('Enter key', select([['desktop', 'Sends on desktop, new line on phone'], ['always', 'Always sends'], ['never', 'Never sends (use the button)']], a.enterToSend, v => { a.enterToSend = v; saveSettingsDebounced(); }))),
         dialogueSection(rerender),

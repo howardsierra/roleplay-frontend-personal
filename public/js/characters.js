@@ -23,11 +23,27 @@ export function cardTile(c, { compact = false, onPick } = {}) {
         el('div', { class: 'char-tile-info' },
             el('div', { class: 'char-tile-name' }, c.fav ? icon('star', 'fav-star') : null, c.name),
             compact ? el('div', { class: 'char-tile-notes' }, c.notes || (c.tags || []).slice(0, 4).join(' · ')) : el('div', { class: 'char-tile-tags' }, (c.tags || []).slice(0, 3).map(t => el('span', { class: 'tag' }, t)))));
-    tile.addEventListener('click', () => (onPick ? onPick(c) : showCharacterProfile(c.id)));
+    let held = 0;
+    let skipClick = false;
+    let touch = false;
+    tile.addEventListener('click', e => {
+        if (skipClick) { skipClick = false; e.preventDefault(); return; }
+        onPick ? onPick(c) : showCharacterProfile(c.id);
+    });
     tile.addEventListener('contextmenu', e => {
         e.preventDefault();
-        editCharacter(c.id);
+        // On touch the hold timer below opens the menu (Android also sends contextmenu: don't open it twice).
+        if (touch || tile.closest('.selecting')) return;
+        characterMenu(tile, c);
     });
+    // Touch: hold for the same menu.
+    tile.addEventListener('pointerdown', e => {
+        touch = e.pointerType === 'touch';
+        skipClick = false; // Android sends no click after a long press: don't swallow the next real tap
+        if (!touch || tile.closest('.selecting')) return;
+        held = setTimeout(() => { skipClick = true; navigator.vibrate?.(15); characterMenu(tile, c); }, 550);
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) tile.addEventListener(ev, () => clearTimeout(held));
     return tile;
 }
 
@@ -81,10 +97,26 @@ export function refreshGreeting() {
     return true;
 }
 
+/**
+ * Leaving a chat while a reply is still being written: stop it first, so what arrived is saved to the chat
+ * it belongs to (not the one you're switching to).
+ */
+async function settleGeneration() {
+    if (!state.generating) return;
+    const { stopGeneration } = await import('./chat.js');
+    stopGeneration();
+    for (let i = 0; i < 80 && state.generating; i++) await new Promise(r => setTimeout(r, 50));
+    toast('Stopped the reply that was being written', 'info', { timeout: 2200 });
+}
+
 export async function openCharacter(id, { chatId, fresh = false } = {}) {
-    if (state.generating) return toast('Wait for the current reply to finish', 'warning');
+    await settleGeneration();
     await saveChat();
     const character = await api.get(`characters/${encodeURIComponent(id)}`);
+    // Forget the old chat before switching character, so nothing can save it into the new character's folder.
+    state.chatId = null;
+    state.chat = [];
+    state.chatMeta = {};
     state.character = character;
     document.body.classList.remove('no-character');
     closeAllDrawers();
@@ -108,6 +140,8 @@ export function updateHeader() {
 }
 
 export async function openChat(chatId) {
+    await settleGeneration();
+    await saveChat();
     const chat = await api.get(`chats/${encodeURIComponent(state.character.id)}/${encodeURIComponent(chatId)}`);
     state.chatId = chat.id;
     state.chatMeta = chat.meta || {};
@@ -131,6 +165,7 @@ async function rememberChat() {
 
 export async function newChat({ messages } = {}) {
     if (!state.character) return;
+    await settleGeneration();
     await saveChat();
     const greeting = greetingMessage();
     const chat = await api.post(`chats/${encodeURIComponent(state.character.id)}`, {
@@ -151,6 +186,7 @@ export async function newChat({ messages } = {}) {
 
 /** Leave the current chat and return to the home screen. */
 export async function closeChat() {
+    await settleGeneration();
     await saveChat();
     state.character = null;
     state.chatId = null;
@@ -180,11 +216,13 @@ export async function deleteChat(charId, chatId) {
     if (isOpen) await saveChat();
     await api.del(`chats/${encodeURIComponent(charId)}/${encodeURIComponent(chatId)}`);
     if (localStorage.getItem(`rv-last-chat-${charId}`) === chatId) localStorage.removeItem(`rv-last-chat-${charId}`);
+    await eventSource.emit(event_types.CHAT_DELETED, chatId);
+    // Deleting the open chat goes back Home (rather than opening another chat with the same character).
     if (isOpen) {
         state.chatId = null;
-        await openCharacter(charId);
+        state.chat = [];
+        await closeChat();
     }
-    await eventSource.emit(event_types.CHAT_DELETED, chatId);
 }
 
 export async function showChatList() {
@@ -210,8 +248,10 @@ export async function showChatList() {
                     el('button', { class: 'icon-btn', title: 'Export…', onclick: e => { const b = e.currentTarget; import('./export.js').then(m => m.exportMenu(b, charId, c.id)); } }, icon('download')),
                     el('button', { class: 'icon-btn danger', title: 'Delete', onclick: async () => {
                         if (!await confirmDialog(`Delete chat "${c.id}"?`, { okLabel: 'Delete', danger: true })) return;
+                        const wasOpen = c.id === state.chatId && state.character?.id === charId;
                         await deleteChat(charId, c.id);
-                        render();
+                        if (wasOpen) close(); // back Home
+                        else render();
                     } }, icon('trash-can'))));
             return row;
         }));
@@ -271,6 +311,47 @@ const timeAgo = ms => {
 const plain = text => String(text ?? '').replace(/<[^>]+>/g, ' ').replace(/[*_~`#]+/g, '').replace(/\s+/g, ' ').trim();
 
 /** A character's profile: portrait, details and their chats, with Continue / New chat / Edit. */
+/**
+ * Deletes characters (and all their chats) after one confirmation. Returns true if anything was deleted.
+ * Used by the editor, the profile, tile menus and the Characters browser's select mode.
+ */
+export async function deleteCharacters(ids) {
+    ids = [...new Set(ids)].filter(Boolean);
+    if (!ids.length) return false;
+    const names = ids.map(id => state.characters.find(c => c.id === id)?.name || 'this character');
+    const what = ids.length === 1 ? names[0] : `${ids.length} characters (${names.slice(0, 4).join(', ')}${ids.length > 4 ? '…' : ''})`;
+    if (!await confirmDialog(`Delete ${what} and all of their chats? This can't be undone. (Backups in Settings → More keep a copy.)`, { okLabel: ids.length === 1 ? 'Delete forever' : `Delete ${ids.length} forever`, danger: true })) return false;
+    let failed = 0;
+    for (const id of ids) {
+        try {
+            await api.del(`characters/${encodeURIComponent(id)}`);
+            localStorage.removeItem(`rv-last-chat-${id}`);
+            await eventSource.emit(event_types.CHARACTER_DELETED, { id });
+            if (state.character?.id === id) {
+                state.chatId = null; // nothing left to save: the chats went with the character
+                await closeChat();
+            }
+        } catch { failed++; }
+    }
+    await loadCharacters();
+    (await import('./home.js')).renderHome();
+    if (failed) toast(`${failed} couldn't be deleted`, 'error');
+    else toast(ids.length === 1 ? `Deleted ${names[0]}` : `Deleted ${ids.length} characters`, 'success');
+    return ids.length > failed;
+}
+
+/** Long-press / right-click menu for a character tile. */
+export function characterMenu(anchor, c) {
+    import('./chat.js').then(({ popMenu }) => popMenu(anchor, [
+        ['book-open', 'Open', () => openCharacter(c.id)],
+        ['pen', 'Edit', () => editCharacter(c.id)],
+        ['star', c.fav ? 'Remove from favourites' : 'Add to favourites', async () => { await api.put(`characters/${encodeURIComponent(c.id)}`, { fav: !c.fav }); loadCharacters(); }],
+        ['clone', 'Duplicate', async () => { const copy = await api.post(`characters/${encodeURIComponent(c.id)}/duplicate`); toast(`Duplicated as ${copy.card.data.name}`, 'success'); loadCharacters(); }],
+        ['image', 'Export PNG', () => { location.href = `api/characters/${encodeURIComponent(c.id)}/export.png`; }],
+        ['trash-can', 'Delete…', () => deleteCharacters([c.id]), 'danger'],
+    ]));
+}
+
 export async function showCharacterProfile(id) {
     const [character, chats] = await Promise.all([
         api.get(`characters/${encodeURIComponent(id)}`),
@@ -294,7 +375,17 @@ export async function showCharacterProfile(id) {
             el('div', { class: 'char-profile-actions' },
                 chats.length ? el('button', { class: 'btn primary', onclick: () => go({ chatId: chats[0].id }) }, icon('book-open'), 'Continue') : null,
                 el('button', { class: `btn${chats.length ? '' : ' primary'}`, onclick: () => go({ fresh: true }) }, icon('feather'), 'New chat'),
-                el('button', { class: 'btn', onclick: () => { close(); editCharacter(id); } }, icon('pen'), 'Edit')),
+                el('button', { class: 'btn', onclick: () => { close(); editCharacter(id); } }, icon('pen'), 'Edit'),
+                el('button', { class: 'btn icon-only', title: 'More (duplicate, export, delete…)', onclick: e => {
+                    const anchor = e.currentTarget;
+                    const summary = state.characters.find(x => x.id === id) || { id, name: d.name };
+                    import('./chat.js').then(({ popMenu }) => popMenu(anchor, [
+                        ['clone', 'Duplicate', async () => { close(); const copy = await api.post(`characters/${encodeURIComponent(id)}/duplicate`); toast(`Duplicated as ${copy.card.data.name}`, 'success'); loadCharacters(); }],
+                        ['image', 'Export PNG', () => { location.href = `api/characters/${encodeURIComponent(id)}/export.png`; }],
+                        ['file-code', 'Export JSON', () => { location.href = `api/characters/${encodeURIComponent(id)}/export.json`; }],
+                        ['trash-can', `Delete ${summary.name}…`, async () => { if (await deleteCharacters([id])) close(); }, 'danger'],
+                    ]));
+                } }, icon('ellipsis'))),
             chats.length ? el('div', { class: 'char-profile-chats' },
                 el('div', { class: 'section-label' }, `Chats (${chats.length})`),
                 chats.slice(0, 6).map(c => el('button', { class: 'char-profile-chat', onclick: () => go({ chatId: c.id }) },
@@ -311,7 +402,7 @@ async function maybeImportEmbeddedBook(character) {
     const world = normalizeWorld(book, book.name || `${character.card.data.name}'s Lore`);
     const saved = await api.post('worlds', world);
     character.card.data.extensions = { ...(character.card.data.extensions || {}), world: saved.name };
-    await api.put(`characters/${encodeURIComponent(character.id)}`, { card: character.card });
+    await api.put(`characters/${encodeURIComponent(character.id)}`, { extensions: { world: saved.name } });
     toast(`Linked lorebook “${saved.name}” (${Object.keys(saved.entries).length} entries)`, 'info');
 }
 
@@ -393,34 +484,61 @@ export async function editCharacter(id, { isNew = false } = {}) {
             loadCharacters();
         } }, icon('clone'), 'Duplicate'),
         el('button', { class: 'btn small danger', onclick: async () => {
-            if (!await confirmDialog(`Delete ${d.name} and all of their chats? This cannot be undone.`, { okLabel: 'Delete forever', danger: true })) return;
-            await api.del(`characters/${encodeURIComponent(id)}`);
-            await eventSource.emit(event_types.CHARACTER_DELETED, { id });
-            if (state.character?.id === id) {
-                state.chatId = null; // nothing left to save: the chats went with the character
-                await closeChat();
-            }
-            document.querySelector('.modal-wrap.open .modal-head .icon-btn')?.click();
-            loadCharacters();
-        } }, icon('trash-can'), 'Delete'));
+            deleted = true; // don't autosave a character that's about to go
+            if (!await deleteCharacters([id])) { deleted = false; return; }
+            closeEditor();
+        } }, icon('trash-can'), 'Delete character'));
 
-    const result = await modal({
+    // Saves as you go (like SillyTavern): a moment after each change, and once more when the editor closes,
+    // however it's closed (Done, ✕, Esc or a tap outside), so nothing typed is lost.
+    const status = el('span', { class: 'hint editor-save-status' }, 'Changes save automatically');
+    let dirty = false;
+    let timer = 0;
+    let saving = Promise.resolve();
+    let deleted = false;
+    let closeEditor = () => {};
+    const save = () => {
+        clearTimeout(timer);
+        if (!dirty || deleted) return saving;
+        dirty = false;
+        status.textContent = 'Saving…';
+        saving = saving.then(async () => {
+            // Only the fields this editor owns: banners and extensions save their own parts of the card.
+            const { extensions, ...fields } = structuredClone(d);
+            const saved = await api.put(`characters/${encodeURIComponent(id)}`, { data: fields, extensions: { world: extensions?.world || '' } });
+            character.card = saved.card;
+            if (state.character?.id === id) {
+                state.character = { ...state.character, ...saved };
+                updateHeader();
+            }
+            status.textContent = 'Saved';
+            await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id } });
+        }).catch(err => {
+            dirty = true;
+            status.textContent = 'Not saved';
+            toast(`Couldn't save ${d.name}: ${err.message}`, 'error');
+        });
+        return saving;
+    };
+    const changed = () => { dirty = true; status.textContent = 'Editing…'; clearTimeout(timer); timer = setTimeout(save, 900); };
+    const content = el('div', { class: 'stack' }, tabBar, body, extras, status);
+    // Field handlers update the draft first; this hears the same events as they bubble up.
+    content.addEventListener('input', changed);
+    content.addEventListener('change', changed);
+    content.addEventListener('click', e => { if (e.target.closest('.greeting-row .icon-btn, .stack > .btn.small')) changed(); });
+
+    await modal({
         title: isNew ? 'Create character' : `Edit ${d.name}`,
-        content: el('div', { class: 'stack' }, tabBar, body, extras),
+        content,
         wide: true,
-        buttons: [{ label: 'Cancel', value: false }, { label: 'Save', value: true, primary: true, icon: 'check' }],
+        buttons: [{ label: 'Done', value: true, primary: true, icon: 'check' }],
+        onOpen: (_b, close) => { closeEditor = () => close(null); },
     });
-    if (!result) return;
-    character.card.data = d;
-    const saved = await api.put(`characters/${encodeURIComponent(id)}`, { card: character.card });
-    if (state.character?.id === id) {
-        state.character = { ...state.character, ...saved };
-        updateHeader();
-    }
-    await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id } });
-    toast('Saved', 'success', { timeout: 1500 });
+    const hadChanges = dirty;
+    await save();
+    if (hadChanges && !deleted && status.textContent === 'Saved') toast('Saved', 'success', { timeout: 1500 });
     await loadCharacters();
-    if (isNew) openCharacter(id);
+    if (isNew && !deleted) openCharacter(id);
 }
 
 export function exportChatFile() {

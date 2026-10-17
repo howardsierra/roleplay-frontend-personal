@@ -1,6 +1,7 @@
 // A subset of SillyTavern's server API that popular extensions call directly.
 // Paths and response shapes mirror ST (e.g. uploads return { path: 'user/images/<folder>/<file>' }).
 import express from 'express';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -20,7 +21,8 @@ router.post('/images/upload', async (req, res) => {
     if (!image) return res.status(400).json({ error: 'No image data' });
     if (!IMAGE_FORMATS.test(format)) return res.status(400).json({ error: 'Unsupported format' });
     const dir = folder ? within(DIRS.images, sanitize(folder)) : DIRS.images;
-    const name = `${sanitize(filename || Date.now())}.${format.toLowerCase()}`;
+    // Media is served without a login (sandboxed frames send no cookies), so names must be unguessable.
+    const name = `${sanitize(filename || Date.now())}-${crypto.randomBytes(6).toString('hex')}.${format.toLowerCase()}`;
     await writeAtomic(within(dir, name), Buffer.from(String(image).replace(/^data:[^,]+,/, ''), 'base64'));
     const rel = folder ? `${sanitize(folder)}/${name}` : name;
     res.json({ path: `user/images/${rel}` });

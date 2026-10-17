@@ -33,7 +33,7 @@ export function newId() {
 
 /** Restrict ids/filenames to a safe charset so they can never escape their folder. */
 export function safeName(name) {
-    const cleaned = String(name ?? '').replace(/[^\p{L}\p{N} _.\-()]/gu, '').replace(/^\.+/, '').trim().slice(0, 120);
+    const cleaned = String(name ?? '').replace(/[^\p{L}\p{N} _.\-()@,']/gu, '').replace(/^\.+/, '').trim().slice(0, 120);
     if (!cleaned) throw Object.assign(new Error('Invalid name'), { status: 400 });
     return cleaned;
 }
@@ -60,11 +60,35 @@ export async function writeJson(file, data) {
     await writeAtomic(file, JSON.stringify(data, null, 2));
 }
 
-export async function writeAtomic(file, contents) {
-    await fsp.mkdir(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await fsp.writeFile(tmp, contents);
-    await fsp.rename(tmp, file);
+// Writes to the same file run one after another (and each uses its own temp file), so two saves landing
+// in the same instant can't interleave or leave a half-written file behind.
+const writeQueues = new Map();
+export function writeAtomic(file, contents) {
+    const prev = writeQueues.get(file) || Promise.resolve();
+    const next = prev.catch(() => {}).then(async () => {
+        await fsp.mkdir(path.dirname(file), { recursive: true });
+        const tmp = `${file}.${process.pid}.${Date.now()}.${crypto.randomBytes(4).toString('hex')}.tmp`;
+        try {
+            await fsp.writeFile(tmp, contents);
+            await fsp.rename(tmp, file);
+        } catch (err) {
+            await fsp.rm(tmp, { force: true }).catch(() => {});
+            throw err;
+        }
+    });
+    writeQueues.set(file, next);
+    next.finally(() => { if (writeQueues.get(file) === next) writeQueues.delete(file); }).catch(() => {});
+    return next;
+}
+
+/** Runs fn with exclusive access to `key` (read-modify-write of one file: no lost updates). */
+const locks = new Map();
+export function withLock(key, fn) {
+    const prev = locks.get(key) || Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    locks.set(key, run);
+    run.finally(() => { if (locks.get(key) === run) locks.delete(key); }).catch(() => {});
+    return run;
 }
 
 export async function listJson(dir) {

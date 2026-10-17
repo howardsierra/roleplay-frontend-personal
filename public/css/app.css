@@ -1720,3 +1720,29 @@ body.rv-prose-hold .mes.last_mes:not(.user_mes) .mes_block::after { content: 'âœ
 }
 .switch > .switch-track { pointer-events: none; }
 [data-rv-clear-drawer] { visibility: hidden !important; }
+.btn.icon-only { padding-left: 12px; padding-right: 12px; }
+.browser-select-bar { position: sticky; top: -10px; z-index: 2; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-radius: 14px; border: 1px solid color-mix(in srgb, #f87171 40%, var(--SmartThemeBorderColor)); background: var(--SmartThemeBlurTintColor); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.browser-select-bar.hidden { display: none; }
+.browser-select-bar .grow { flex: 1; font-size: .9em; }
+.browser-grid.selecting .char-tile { outline: 2px dashed color-mix(in srgb, var(--SmartThemeBodyColor) 25%, transparent); outline-offset: -2px; }
+.browser-grid.selecting .char-tile.picked { outline: 3px solid #f87171; outline-offset: -3px; }
+.browser-grid.selecting .char-tile.picked::after { content: "\f00c"; font-family: "Font Awesome 6 Free"; font-weight: 900; position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: #f87171; color: #fff; font-size: .8em; z-index: 3; }
+.btn.active { background: color-mix(in srgb, var(--rv-accent) 22%, transparent); border-color: color-mix(in srgb, var(--rv-accent) 45%, transparent); }
+
+/* =====================================================================
+   Streaming: typing caret, jump-to-latest
+   ===================================================================== */
+@keyframes rvCaret { 0%, 45% { opacity: 1; } 55%, 100% { opacity: 0; } }
+.mes.streaming .mes_text > :last-child::after,
+.mes.streaming .mes_text:not(:has(> *))::after {
+    content: ""; display: inline-block; width: .5em; height: 1.05em; margin-left: 3px; vertical-align: -.15em;
+    border-radius: 2px; background: var(--rv-accent); animation: rvCaret 1s steps(1) infinite;
+}
+.mes.streaming .mes_text > :is(pre, ul, ol, table, div, iframe, figure):last-child::after { display: none; }
+.jump-latest { position: absolute; right: 18px; bottom: calc(var(--rv-composer-h, 90px) + 12px); z-index: 11; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center;
+    color: var(--SmartThemeBodyColor); background: var(--SmartThemeBlurTintColor); border: 1px solid var(--SmartThemeBorderColor);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 10px 30px -10px rgba(0, 0, 0, .7); transition: transform .2s, opacity .2s; }
+.jump-latest.hidden { display: grid; opacity: 0; transform: translateY(10px) scale(.9); pointer-events: none; }
+.jump-latest:hover { color: var(--rv-accent); }
+.jump-latest .jump-dot { position: absolute; top: 4px; right: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--rv-accent); opacity: 0; }
+.jump-latest.live .jump-dot { opacity: 1; animation: pulseDot 1.2s ease-in-out infinite; }

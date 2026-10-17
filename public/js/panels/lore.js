@@ -91,7 +91,7 @@ async function openWorld(id) {
             state.character ? el('button', { class: 'btn small', onclick: async () => {
                 state.character.card.data.extensions = { ...(state.character.card.data.extensions || {}), world: world.name };
                 state.character.card.data.character_book = toCharacterBook(world);
-                await api.put(`characters/${encodeURIComponent(state.character.id)}`, { card: state.character.card });
+                await api.put(`characters/${encodeURIComponent(state.character.id)}`, { data: { character_book: state.character.card.data.character_book }, extensions: { world: world.name } });
                 toast(`Linked to ${state.character.card.data.name}`, 'success');
             } }, icon('link'), 'Link to current character') : null,
             el('button', { class: 'btn small danger', onclick: async () => {

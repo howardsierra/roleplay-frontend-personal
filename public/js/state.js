@@ -102,10 +102,22 @@ export async function loadSettings() {
     state.settings = merge(structuredClone(DEFAULT_SETTINGS), saved);
 }
 
+/** Tell the user when something didn't save (once in a while, not on every retry). */
+let lastSaveWarning = 0;
+export function warnSaveFailed(what, err) {
+    console.error(`${what} save failed`, err);
+    if (Date.now() - lastSaveWarning < 15000) return;
+    lastSaveWarning = Date.now();
+    import('./ui.js').then(({ toast }) => toast(`${err?.message || err}. Reverie will keep trying; don't close this tab yet.`, 'error', { title: `Couldn't save ${what}`, timeout: 7000 }));
+}
+
 let saveTimer = null;
 export function saveSettingsDebounced() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveSettings, 600);
+    saveTimer = setTimeout(() => saveSettings().catch(err => {
+        warnSaveFailed('settings', err);
+        saveTimer = setTimeout(() => saveSettings().catch(e => warnSaveFailed('settings', e)), 4000);
+    }), 600);
 }
 
 export async function saveSettings() {
@@ -132,8 +144,12 @@ export async function saveChat() {
     const charId = state.character.id;
     const chatId = state.chatId;
     const payload = { meta: state.chatMeta, messages: state.chat };
-    chatSaving = chatSaving.then(() => api.put(`chats/${encodeURIComponent(charId)}/${encodeURIComponent(chatId)}`, payload)).catch(err => {
-        console.error('Chat save failed', err);
+    const put = () => api.put(`chats/${encodeURIComponent(charId)}/${encodeURIComponent(chatId)}`, payload);
+    chatSaving = chatSaving.then(put).catch(async err => {
+        warnSaveFailed('the chat', err);
+        // One retry a little later (the server may have been restarting).
+        await new Promise(r => setTimeout(r, 3000));
+        return put().catch(e => warnSaveFailed('the chat', e));
     });
     return chatSaving;
 }

@@ -6,6 +6,7 @@ import { buildPrompt, samplerParams } from './prompt.js';
 import { substituteParams } from './macros.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { splitReasoning, endsInsideThinking, stripReasoning, modelStartsInside, learnStartsInside } from './reasoning.js';
+import { createStreamPainter } from './stream-view.js';
 import { formatMessage, hydrate } from './render.js';
 import { el, icon, toast, confirmDialog, modal, escapeHtml, isMobile } from './ui.js';
 import { points, plainMessage, onPointsChanged } from './rv-ext/points.js';
@@ -158,9 +159,14 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
         try { hook(node, mes, id, { streaming }); } catch (err) { console.error('Render hook failed', err); }
     }
 
+    paintSwipeControls(node, mes, id);
+}
+
+/** Swipe arrows, counter and the last-message mark (cheap: doesn't touch the message body). */
+function paintSwipeControls(node, mes, id) {
     const swipes = mes.swipes?.length || 1;
     const isLast = id === state.chat.length - 1;
-    const canSwipe = isLast && !mes.is_user && (swipes > 1 || id > 0 || state.chat.length > 0);
+    const canSwipe = isLast && !mes.is_user && !mes.is_system && (swipes > 1 || id > 0 || state.chat.length > 0);
     node.classList.toggle('swipes-visible', canSwipe || swipes > 1);
     node.querySelector('.swipes-counter').textContent = swipes > 1 ? `${(mes.swipe_id ?? 0) + 1} / ${swipes}` : '';
     node.querySelector('.swipe_right').classList.toggle('hidden', !canSwipe);
@@ -208,10 +214,17 @@ export function clearChat() {
 }
 
 export function refreshSwipeControls() {
+    // Only the controls and the per-message extras (render hooks) change here. Re-rendering the whole
+    // message would reload its HTML widgets and re-run their scripts on every send.
     const last = state.chat.length - 1;
     chatEl().querySelectorAll('.mes').forEach(node => {
         const id = Number(node.getAttribute('mesid'));
-        if (id >= last - 1) renderMessageInto(node, state.chat[id], id);
+        const mes = state.chat[id];
+        if (id < last - 1 || !mes) return;
+        paintSwipeControls(node, mes, id);
+        for (const hook of renderHooks) {
+            try { hook(node, mes, id, { streaming: false }); } catch (err) { console.error('Render hook failed', err); }
+        }
     });
 }
 
@@ -277,10 +290,21 @@ export async function regenerateWithNote() {
     const mes = state.chat[id];
     if (!mes || mes.is_user || noteDialogOpen) return;
     if (state.generating) return toast('Wait for the current reply to finish', 'info', { timeout: 2000 });
-    const { promptDialog } = await import('./ui.js');
     noteDialogOpen = true;
-    const note = await promptDialog('What should be different this time?', '', {
-        title: 'Regenerate with a note', multiline: true, placeholder: 'e.g. shorter · more tension · she wouldn\'t forgive him that fast · describe the room',
+    const input = el('textarea', { class: 'input', rows: 3, placeholder: 'e.g. shorter · more tension · she wouldn\'t forgive him that fast · describe the room' });
+    let submit = () => {};
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); } });
+    // Three ways out: a note, a plain reroll (no note), or never mind.
+    const note = await modal({
+        title: 'Regenerate',
+        content: el('div', { class: 'stack' }, el('label', { class: 'field' }, el('span', { class: 'field-label' }, 'What should be different this time? (optional)'), input),
+            el('p', { class: 'hint' }, 'The note only goes into this one regeneration.')),
+        buttons: [
+            { label: 'Cancel', value: null },
+            { label: 'Just regenerate', value: '', icon: 'rotate' },
+            { label: 'Regenerate with note', value: () => input.value, primary: true, icon: 'comment-dots' },
+        ],
+        onOpen: (_b, close) => { submit = () => close(input.value); setTimeout(() => input.focus(), 60); },
     });
     noteDialogOpen = false;
     if (note === null || note === undefined) return;
@@ -385,6 +409,7 @@ async function moreMenu(id, anchor) {
             await saveChat();
         }],
         hasHistory(mes) ? ['clock-rotate-left', 'Edit history', () => openHistory(id)] : null,
+        !mes.is_user && id === state.chat.length - 1 ? ['rotate', 'Regenerate', () => (state.generating ? toast('Wait for the current reply to finish', 'info', { timeout: 2000 }) : generate('swipe'))] : null,
         !mes.is_user && id === state.chat.length - 1 ? ['comment-dots', 'Regenerate with a note…', () => regenerateWithNote()] : null,
         ['code-branch', 'Branch from here', () => import('./characters.js').then(m => m.branchChat(id))],
         mes.is_user ? null : ['magnifying-glass-chart', 'Inspect prompt', () => showInspector({ mesKey: captureKey(messageId(state.chat[id]), state.chat[id]?.swipe_id), gen: state.chat[id]?.extra?.gen })],
@@ -442,9 +467,24 @@ export async function showPromptPreview() {
 export function bindChatEvents() {
     const root = chatEl();
     onPointsChanged(kind => { if (kind === 'messageActions' || kind === 'renderers') printMessages(); });
+    // Scrolled up to reread? Streaming stops pulling you down; a button brings you back to the latest text.
+    const jump = el('button', { id: 'jump-latest', class: 'jump-latest hidden', title: 'Jump to the latest message', onclick: () => {
+        stickToBottom = true;
+        root.scrollTo({ top: root.scrollHeight, behavior: 'smooth' });
+    } }, icon('arrow-down'), el('span', { class: 'jump-dot' }));
+    root.after(jump);
+    const syncJump = () => {
+        const away = root.scrollHeight - root.scrollTop - root.clientHeight > 240;
+        jump.classList.toggle('hidden', !away || !state.chat.length);
+        jump.classList.toggle('live', away && state.generating);
+    };
     root.addEventListener('scroll', () => {
         stickToBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 80;
+        syncJump();
     }, { passive: true });
+    eventSource.on(event_types.GENERATION_STARTED, syncJump);
+    eventSource.on(event_types.GENERATION_ENDED, syncJump);
+    eventSource.on(event_types.CHAT_CHANGED, () => { stickToBottom = true; syncJump(); });
 
     // Long-press (or right-click) the new-reply arrow to regenerate with a note.
     let holdTimer = 0;
@@ -518,6 +558,10 @@ export function bindChatEvents() {
     root.addEventListener('touchstart', e => {
         const node = e.target.closest('.mes.last_mes');
         if (!node || e.target.closest('.rv-frame-wrap, textarea, pre')) { target = null; return; }
+        // Scrolling something wide sideways (a table, a long thinking block) is not a swipe.
+        for (let n = e.target; n && n !== node; n = n.parentElement) {
+            if (n.scrollWidth > n.clientWidth + 2 && /auto|scroll/.test(getComputedStyle(n).overflowX)) { target = null; return; }
+        }
         target = node;
         sx = e.touches[0].clientX;
         sy = e.touches[0].clientY;
@@ -542,6 +586,16 @@ export function zoomImage(src) {
 // ====================================================================
 // Generation
 // ====================================================================
+
+let speedShownAt = 0;
+/** "Writing… 42 t/s" in the toolbar status while a reply streams (≈4 characters per token). */
+function reportSpeed(chars, since) {
+    const t = Date.now();
+    if (t - speedShownAt < 500 || !since || t - since < 800) return;
+    speedShownAt = t;
+    const label = document.querySelector('#gen-status .label');
+    if (label && document.getElementById('gen-status').classList.contains('writing')) label.textContent = `Writing… ${Math.round(chars / 4 / ((t - since) / 1000))} t/s`;
+}
 
 function setGenerating(on) {
     state.generating = on;
@@ -613,7 +667,12 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         toast('Pick a character first', 'warning');
         return;
     }
-    if (state.generating) return;
+    if (state.generating) {
+        // Extensions often ask the AI something quietly while (or right as) a reply is written: answer them
+        // on the side instead of returning nothing.
+        if (type === 'quiet' && !quietToLoud) return quietOnTheSide(quietPrompt);
+        return;
+    }
     if (!state.settings.connection.model) {
         toast('Choose an API and model in Settings → Connection first.', 'warning');
         import('./panels/settings.js').then(m => m.openSettings('connection'));
@@ -627,6 +686,7 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
     let target = null; // message being written
     let targetId = -1;
     let prefixText = '';
+    let newSlot = false; // a new message or swipe was made for this reply (removed again if it stays empty)
     try {
         if (!(await runInterceptors(type, controller))) return;
         await eventSource.emit(event_types.GENERATION_STARTED, type, {}, false);
@@ -635,7 +695,7 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         if (type === 'swipe' || type === 'regenerate') {
             targetId = state.chat.length - 1;
             target = state.chat[targetId];
-            if (!target || target.is_user) {
+            if (!target || target.is_user || target.is_system) {
                 type = 'normal';
                 target = null;
             }
@@ -643,12 +703,13 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         if (type === 'continue') {
             targetId = state.chat.length - 1;
             target = state.chat[targetId];
-            if (!target) { type = 'normal'; target = null; }
+            if (!target || target.is_system) { type = 'normal'; target = null; }
             else prefixText = target.mes;
         }
 
         const built = await buildPrompt({ type, quietPrompt, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
         const { messages, prefill, extraParams } = built;
+        if (controller.signal.aborted) throw new DOMException('Stopped', 'AbortError');
         const requestId = newRequestId();
         const body = { ...connectionBody(), messages, params: { ...samplerParams(), ...extraParams }, requestId };
         const capture = {
@@ -688,6 +749,7 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             };
             state.chat.push(target);
             targetId = state.chat.length - 1;
+            newSlot = true;
             refreshSwipeControls();
             addOneMessage(target, { forceId: targetId });
         } else if (type === 'swipe' || type === 'regenerate') {
@@ -700,6 +762,7 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             target.mes = '';
             target.extra = {};
             target.send_date = nowDate();
+            newSlot = true;
             messageNode(targetId)?.classList.add('swiping');
             setTimeout(() => messageNode(targetId)?.classList.remove('swiping'), 260);
         }
@@ -708,17 +771,16 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         let reasoningEnd = 0;
         let firstTextAt = 0;
         let result = null;
+        let partialError = null;
 
         let text = '';
         let reasoning = ''; // from the provider's reasoning channel
-        let frame = 0;
         // Inline <think> blocks: a prefill that opens one means the reply starts inside it.
         const startsInside = type !== 'continue' && endsInsideThinking(prefill);
         const streamsInside = startsInside || (type !== 'continue' && modelStartsInside(body.model));
         const shownPrefill = prefill && state.settings.generation.showPrefill && !endsInsideThinking(prefill) && !splitReasoning(prefill).reasoning ? prefill : '';
-        const paint = () => {
-            frame = 0;
-            const split = splitReasoning(text, { streaming: true, startsInside: streamsInside });
+        const paint = (shownText = text) => {
+            const split = splitReasoning(shownText, { streaming: true, startsInside: streamsInside });
             // Regex that changes the saved message (e.g. hiding status blocks) also applies while streaming.
             const shown = applyRegex(split.text, REGEX_PLACEMENT.AI_OUTPUT);
             target.mes = type === 'continue' ? prefixText + shown : shownPrefill + shown;
@@ -728,27 +790,46 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             updateMessageBlock(targetId, target, { streaming: true });
             scrollToBottom();
         };
-        const schedule = () => { if (!frame) frame = requestAnimationFrame(paint); };
+        // Steady reveal + render pacing (stream-view.js).
+        const painter = createStreamPainter(paint, { smooth: state.settings.appearance.smoothStreaming !== false });
+        messageNode(targetId)?.classList.add('streaming');
 
         if (state.preset.samplers.stream !== false) {
-            result = await streamCompletion(body, {
-                signal: controller.signal,
-                onText: t => {
-                    if (!firstTextAt) firstTextAt = Date.now();
-                    if (!reasoningEnd && reasoning) reasoningEnd = Date.now();
-                    text += t;
-                    eventSource.emitAndWait(event_types.STREAM_TOKEN_RECEIVED, text);
-                    schedule();
-                },
-                onReasoning: r => { reasoning += r; schedule(); },
-            });
+            try {
+                result = await streamCompletion(body, {
+                    signal: controller.signal,
+                    onText: t => {
+                        if (!firstTextAt) firstTextAt = Date.now();
+                        if (!reasoningEnd && reasoning) reasoningEnd = Date.now();
+                        text += t;
+                        painter.push(t);
+                        reportSpeed(text.length, firstTextAt);
+                        eventSource.emitAndWait(event_types.STREAM_TOKEN_RECEIVED, text);
+                    },
+                    onReasoning: r => { reasoning += r; painter.refresh(); },
+                });
+                await painter.drain();
+            } catch (err) {
+                // The connection dropped part-way: keep what arrived (it's still useful) and say how to finish it.
+                if (text.trim() && !controller.signal.aborted && err.name !== 'AbortError') {
+                    painter.stop();
+                    partialError = err;
+                    result = { usage: null };
+                } else {
+                    // Stopped: show everything that arrived, not just what had been revealed so far.
+                    if (text) { painter.stop(); paint(text); }
+                    throw err;
+                }
+            } finally {
+                painter.stop();
+                messageNode(targetId)?.classList.remove('streaming');
+            }
         } else {
             result = await completion(body, { signal: controller.signal });
             text = result.text || '';
             reasoning = result.reasoning || '';
         }
         const endedAt = Date.now();
-        if (frame) cancelAnimationFrame(frame);
         const split = splitReasoning(text, { startsInside });
         if (!startsInside && type !== 'continue' && learnStartsInside(body.model, text)) saveSettingsDebounced();
         reasoning = [reasoning, split.reasoning].filter(Boolean).join('\n\n');
@@ -761,7 +842,10 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         if (state.settings.generation.trimIncomplete) final = trimIncomplete(final);
         final = applyRegex(final, REGEX_PLACEMENT.AI_OUTPUT);
         target.mes = type === 'continue' ? prefixText + final : (shownPrefill + final).trim();
-        if (!target.mes.trim() && type !== 'continue') target.mes = '';
+        if (!target.mes.trim() && type !== 'continue') {
+            target.mes = '';
+            throw new Error(reasoning ? 'The AI only sent its thinking and no reply. Try again (or raise the max response length).' : 'The AI sent back an empty reply. Try again, or check the model and settings.');
+        }
         target.extra.api = state.settings.connection.provider;
         target.extra.model = state.settings.connection.model;
         target.extra.gen = generationStats({
@@ -778,10 +862,13 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         if (state.settings.image.inlineTags && state.settings.image.autoGenerateInline) {
             import('./imagegen.js').then(m => m.autoInlinePics(targetId));
         }
+        if (partialError) toast(`${partialError.message || partialError}. What arrived was kept; use Continue (✨ menu) to finish it.`, 'warning', { title: 'The reply was cut off', timeout: 8000 });
         return target.mes;
     } catch (err) {
         if (controller.signal.aborted || err.name === 'AbortError') {
-            if (target) {
+            // Stopped before any text: drop the empty reply / swipe instead of saving it.
+            if (target && !target.mes?.trim() && type !== 'continue' && newSlot) await dropEmpty();
+            else if (target) {
                 syncSwipe(target);
                 updateMessageBlock(targetId, target);
                 await saveChat();
@@ -791,7 +878,16 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         console.error(err);
         toast(err.message || String(err), 'error', { title: 'Generation failed' });
         // Remove an empty placeholder message (or empty swipe) on failure.
-        if (target && !target.mes && type !== 'continue') {
+        if (target && !target.mes && type !== 'continue' && newSlot) await dropEmpty();
+    } finally {
+        state.abortController = null;
+        setGenerating(false);
+        document.getElementById('typing-indicator').classList.add('hidden');
+        await eventSource.emit(event_types.GENERATION_ENDED, state.chat.length);
+    }
+
+    async function dropEmpty() {
+        {
             if (target.swipes?.length > 1) {
                 target.swipes.pop();
                 target.swipe_info?.pop();
@@ -806,12 +902,14 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             }
             await saveChat();
         }
-    } finally {
-        state.abortController = null;
-        setGenerating(false);
-        document.getElementById('typing-indicator').classList.add('hidden');
-        await eventSource.emit(event_types.GENERATION_ENDED, state.chat.length);
     }
+}
+
+async function quietOnTheSide(quietPrompt) {
+    const built = await buildPrompt({ type: 'quiet', quietPrompt });
+    const body = { ...connectionBody(), messages: built.messages, params: { ...samplerParams(), ...built.extraParams }, requestId: newRequestId() };
+    const res = await completion(body);
+    return stripReasoning(res.text);
 }
 
 function trimIncomplete(text) {

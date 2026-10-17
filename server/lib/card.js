@@ -31,6 +31,7 @@ export function summarize(character) {
         avatar: character.avatar,
         tags: d.tags,
         creator: d.creator,
+        assistant: !!d.extensions?.reverie?.assistant,
         notes: (d.creator_notes || '').slice(0, 280),
         fav: !!character.fav,
         created: character.created,

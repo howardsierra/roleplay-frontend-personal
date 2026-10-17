@@ -170,7 +170,7 @@ function sheetData() {
 async function saveSheet(sheet) {
     const c = state.character;
     c.card.data.extensions = { ...(c.card.data.extensions || {}), reverie_sheet: sheet };
-    await api.put(`characters/${encodeURIComponent(c.id)}`, { card: c.card });
+    await api.put(`characters/${encodeURIComponent(c.id)}`, { extensions: { reverie_sheet: sheet } });
     renderSheet();
 }
 
@@ -203,15 +203,19 @@ async function editSheet() {
     let title = cur.title;
     let traits = cur.traits.join(', ');
     let details = cur.details.map(x => `${x.label}: ${x.value}`).join('\n');
-    const ok = await modal({
+    // Saved when the dialog closes, however it's closed (Done, ✕, Esc or a tap outside).
+    let changed = false;
+    const content = el('div', { class: 'stack' },
+        field('Title / epithet', textInput(title, v => { title = v; }, { placeholder: 'First King of Serialis' })),
+        field('Traits (comma separated)', textInput(traits, v => { traits = v; }, { placeholder: 'charismatic, witty, impulsive' })),
+        field('Key details (one per line, “Label: value”)', textArea(details, v => { details = v; }, { rows: 9, placeholder: 'Age: 380\nHeight: 6\'9"\nOccupation: King' })));
+    content.addEventListener('input', () => { changed = true; });
+    await modal({
         title: 'Character sheet',
-        content: el('div', { class: 'stack' },
-            field('Title / epithet', textInput(title, v => { title = v; }, { placeholder: 'First King of Serialis' })),
-            field('Traits (comma separated)', textInput(traits, v => { traits = v; }, { placeholder: 'charismatic, witty, impulsive' })),
-            field('Key details (one per line, “Label: value”)', textArea(details, v => { details = v; }, { rows: 9, placeholder: 'Age: 380\nHeight: 6\'9"\nOccupation: King' }))),
-        buttons: [{ label: 'Cancel', value: false }, { label: 'Save', value: true, primary: true, icon: 'check' }],
+        content,
+        buttons: [{ label: 'Done', value: true, primary: true, icon: 'check' }],
     });
-    if (!ok) return;
+    if (!changed) return;
     await saveSheet({
         title: title.trim(),
         traits: traits.split(',').map(s => s.trim()).filter(Boolean),

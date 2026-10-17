@@ -32,7 +32,7 @@ export async function selectPreset(id, { silent = false } = {}) {
 let timer = null;
 export function savePresetDebounced() {
     clearTimeout(timer);
-    timer = setTimeout(savePreset, 700);
+    timer = setTimeout(() => savePreset().catch(err => import('./state.js').then(m => m.warnSaveFailed('the preset', err))), 700);
 }
 
 export async function savePreset() {

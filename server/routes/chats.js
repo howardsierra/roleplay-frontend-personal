@@ -3,13 +3,19 @@
 import { bannerData } from '../lib/card.js';
 import express from 'express';
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { DIRS, listJson, safeName, within, writeAtomic, removeFile } from '../lib/storage.js';
 
 const router = express.Router();
 const text = express.text({ type: () => true, limit: '64mb' });
 
 const dirFor = charId => within(DIRS.chats, charId);
-const fileFor = (charId, chatId) => within(dirFor(charId), `${chatId}.jsonl`);
+// The extension is added after cleaning the id, so a long chat name can't lose its ".jsonl".
+const fileFor = (charId, chatId) => path.join(dirFor(charId), `${safeName(chatId)}.jsonl`);
+// Names straight from readdir are real files: join them as they are (they may predate today's name rules).
+const listedFile = (charId, name) => path.join(dirFor(charId), path.basename(name));
+// New and renamed chats keep names comfortably short.
+const chatName = s => safeName(String(s).slice(0, 100));
 
 export function parseJsonl(src) {
     const lines = String(src).split(/\r?\n/).filter(l => l.trim());
@@ -54,7 +60,8 @@ router.get('/', async (req, res) => {
         let names = [];
         try { names = (await fsp.readdir(dirFor(charId))).filter(n => n.endsWith('.jsonl')); } catch { continue; }
         for (const name of names) {
-            const stat = await fsp.stat(within(dirFor(charId), name));
+            const stat = await fsp.stat(listedFile(charId, name)).catch(() => null);
+            if (!stat) continue; // deleted while we looked
             all.push({ charId, chatId: name.slice(0, -6), updated: stat.mtimeMs, charName: c.card?.data?.name || '', avatar: c.avatar || null, banner: !!bannerData(c).banner, charUpdated: c.updated || 0 });
         }
     }
@@ -96,7 +103,7 @@ router.get('/search', async (req, res) => {
         let names = [];
         try { names = (await fsp.readdir(dirFor(charId))).filter(n => n.endsWith('.jsonl')); } catch { continue; }
         for (const name of names) {
-            const stat = await fsp.stat(within(dirFor(charId), name)).catch(() => null);
+            const stat = await fsp.stat(listedFile(charId, name)).catch(() => null);
             if (stat) chats.push({ charId, chatId: name.slice(0, -6), updated: stat.mtimeMs, charName: c.card?.data?.name || '', avatar: c.avatar || null });
         }
     }
@@ -125,8 +132,9 @@ router.get('/:charId', async (req, res) => {
     } catch { /* no chats yet */ }
     const list = [];
     for (const name of names) {
-        const file = within(dirFor(req.params.charId), name);
-        const [stat, src] = await Promise.all([fsp.stat(file), fsp.readFile(file, 'utf8')]);
+        const file = listedFile(req.params.charId, name);
+        const [stat, src] = await Promise.all([fsp.stat(file), fsp.readFile(file, 'utf8')]).catch(() => [null, null]);
+        if (!stat) continue;
         let count = 0;
         let preview = '';
         try {
@@ -151,7 +159,7 @@ router.get('/:charId/:chatId', async (req, res) => {
 });
 
 router.post('/:charId', async (req, res) => {
-    const base = safeName(req.body?.name || `${req.body?.characterName || 'Chat'} - ${stamp()}`);
+    const base = chatName(req.body?.name || `${req.body?.characterName || 'Chat'} - ${stamp()}`);
     let id = base;
     for (let i = 2; await fsp.access(fileFor(req.params.charId, id)).then(() => true, () => false); i++) id = `${base} (${i})`;
     const chat = {
@@ -168,7 +176,7 @@ router.put('/:charId/:chatId', async (req, res) => {
 });
 
 router.post('/:charId/:chatId/rename', async (req, res) => {
-    const to = safeName(req.body.name);
+    const to = chatName(req.body.name);
     const target = fileFor(req.params.charId, to);
     if (await fsp.access(target).then(() => true, () => false)) return res.status(409).json({ error: 'A chat with that name already exists' });
     await fsp.rename(fileFor(req.params.charId, req.params.chatId), target);
@@ -182,7 +190,7 @@ router.delete('/:charId/:chatId', async (req, res) => {
 
 router.post('/:charId/import', text, async (req, res) => {
     const chat = parseJsonl(req.body);
-    const id = safeName(`${chat.meta.character_name || 'Imported'} - ${stamp()}`);
+    const id = chatName(`${chat.meta.character_name || 'Imported'} - ${stamp()}`);
     await writeAtomic(fileFor(req.params.charId, id), toJsonl(chat));
     res.json({ id });
 });

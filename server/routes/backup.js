@@ -110,11 +110,16 @@ async function takeSnapshot(reason = 'manual') {
 }
 
 export async function dailySnapshot() {
-    const state = await readState();
-    if (Date.now() - (state.lastSnapshot || 0) < DAY) return;
-    const { characters, chats } = await summary();
-    if (!characters && !chats) return; // nothing worth keeping yet
-    await exclusive(() => takeSnapshot('daily')).catch(err => console.error('[backup] daily snapshot failed:', err.message));
+    try {
+        const state = await readState();
+        if (Date.now() - (state.lastSnapshot || 0) < DAY) return;
+        const { characters, chats } = await summary();
+        if (!characters && !chats) return; // nothing worth keeping yet
+        await exclusive(() => takeSnapshot('daily'));
+    } catch (err) {
+        // Runs from a timer: never let a bad state file take the server down.
+        console.error('[backup] daily snapshot failed:', err.message);
+    }
 }
 
 const snapFile = name => {
@@ -128,17 +133,20 @@ async function inspect(file) {
     const top = new Set();
     let manifest = null;
     const pending = [];
+    let unsafe = false;
     await tar.t({
         file,
         onReadEntry: entry => {
             const p = entry.path.replace(/^\.\//, '');
-            if (p.split('/').includes('..') || p.startsWith('/')) throw Object.assign(new Error('That archive has unsafe paths.'), { status: 400 });
+            // Throwing here would escape the stream as an uncaught exception and stop the server: note it instead.
+            if (p.split('/').includes('..') || p.startsWith('/')) { unsafe = true; entry.resume(); return; }
             top.add(p.split('/')[0]);
             if (p === MANIFEST) pending.push(entry.concat().then(buf => { try { manifest = JSON.parse(buf.toString('utf8')); } catch { /* ignore */ } }));
             else entry.resume();
         },
     });
     await Promise.all(pending);
+    if (unsafe) throw Object.assign(new Error('That archive has unsafe paths.'), { status: 400 });
     const looksRight = manifest?.app === 'reverie' || top.has('settings.json') || top.has('characters') || top.has('chats');
     if (!looksRight) throw Object.assign(new Error('That doesn\'t look like a Reverie backup.'), { status: 400 });
     return { top: [...top].filter(n => n && !ALWAYS_SKIP.has(n)), manifest };

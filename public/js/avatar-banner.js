@@ -45,7 +45,7 @@ async function saveCharacterBanner(charId, patch) {
     const c = state.character?.id === charId ? state.character : await api.get(`characters/${encodeURIComponent(charId)}`);
     const ext = (c.card.data.extensions ??= {});
     ext[KEY] = { ...(ext[KEY] || {}), ...patch };
-    await api.put(`characters/${encodeURIComponent(charId)}`, { card: c.card });
+    await api.put(`characters/${encodeURIComponent(charId)}`, { extensions: { [KEY]: ext[KEY] } });
     regenerate();
     return ext[KEY];
 }

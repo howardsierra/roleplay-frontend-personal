@@ -91,8 +91,13 @@ export function modal({ title = '', content = '', buttons = [{ label: 'Close', v
                 onclick: () => close(typeof b.value === 'function' ? b.value(body) : b.value),
             }, b.icon ? icon(b.icon) : null, b.label));
         }
+        // Esc closes only the dialog on top (a confirm over an editor shouldn't take the editor with it).
+        let myDepth = 0;
         const onKey = e => {
-            if (e.key === 'Escape' && dismissable) close(null);
+            if (e.key === 'Escape' && dismissable && myDepth >= modalDepth && !e.rvModalHandled) {
+                e.rvModalHandled = true;
+                close(null);
+            }
         };
         wrap.addEventListener('mousedown', e => {
             if (e.target === wrap && dismissable) close(null);
@@ -100,6 +105,7 @@ export function modal({ title = '', content = '', buttons = [{ label: 'Close', v
         document.addEventListener('keydown', onKey);
         root.append(wrap);
         modalDepth++;
+        myDepth = modalDepth;
         requestAnimationFrame(() => wrap.classList.add('open'));
         onOpen?.(body, close);
     });

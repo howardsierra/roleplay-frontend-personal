@@ -596,10 +596,8 @@ export function getContext() {
         writeExtensionField: async (characterId, key, value) => {
             const summary = state.characters[characterId];
             if (!summary) return;
-            const c = await api.get(`characters/${encodeURIComponent(summary.id)}`);
-            c.card.data.extensions = { ...(c.card.data.extensions || {}), [key]: value };
-            await api.put(`characters/${encodeURIComponent(summary.id)}`, { card: c.card });
-            if (state.character?.id === summary.id) state.character.card = c.card;
+            const saved = await api.put(`characters/${encodeURIComponent(summary.id)}`, { extensions: { [key]: value } });
+            if (state.character?.id === summary.id) state.character.card = saved.card;
         },
         getThumbnailUrl,
         ConnectionManagerRequestService,

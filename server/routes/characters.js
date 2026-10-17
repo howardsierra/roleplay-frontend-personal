@@ -1,7 +1,7 @@
 import express from 'express';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { DIRS, listJson, newId, readJson, removeFile, within, writeJson, writeAtomic } from '../lib/storage.js';
+import { DATA_DIR, DIRS, listJson, newId, readJson, removeFile, within, withLock, writeJson, writeAtomic } from '../lib/storage.js';
 import { isPng, readCardText, writeCardText } from '../lib/png.js';
 import { normalizeCard, placeholderPng, summarize, bannerData } from '../lib/card.js';
 
@@ -39,6 +39,56 @@ async function createFromCard(card, avatarBuf) {
     return character;
 }
 
+// ---------------------------------------------------------------- the built-in Assistant
+// Like SillyTavern's and Marinara Engine's default assistant: a plain helpful chat partner (not a roleplay
+// character) for questions, brainstorming and drafting cards or lore. Added once; delete it and it stays gone
+// (the Characters browser can add it back).
+const ASSISTANT_MARK = path.join(DATA_DIR, '.assistant-added');
+
+export function assistantCard() {
+    return {
+        spec: 'chara_card_v2',
+        spec_version: '2.0',
+        data: {
+            name: 'Assistant',
+            description: 'A helpful, friendly general-purpose assistant built into Reverie. Not a roleplay character: it answers directly. Good for questions, brainstorming characters and plots, drafting character cards and lorebook entries, polishing writing, and explaining prompts, presets and settings.',
+            personality: 'Warm, clear, practical, honest about what it doesn\'t know.',
+            scenario: '',
+            first_mes: 'Hi {{user}}! I\'m your assistant. Ask me anything, or try:\n\n- *“Help me create a character for a cozy fantasy story.”*\n- *“Write three lorebook entries for a cyberpunk city.”*\n- *“Make this paragraph more atmospheric.”*\n- *“What do temperature and top-p actually do?”*',
+            mes_example: '',
+            creator_notes: 'Reverie\'s built-in assistant. Chats with it work like any other chat. Its own main prompt replaces the preset\'s roleplay instructions.',
+            system_prompt: 'You are {{char}}, a knowledgeable, friendly assistant built into Reverie, a roleplay and creative-writing app. You are not roleplaying and you are not a character in a story: talk with {{user}} directly as yourself. Help with anything they ask: questions, brainstorming, writing and editing, creating characters, scenarios and lorebook entries, and explaining AI settings and prompts. Use Markdown when it helps (headings, lists, tables, code blocks). Be concise by default and go into detail when asked. If you are unsure, say so.',
+            post_history_instructions: '',
+            alternate_greetings: [],
+            tags: ['assistant'],
+            creator: 'Reverie',
+            character_version: '1.0',
+            extensions: { reverie: { assistant: true }, talkativeness: '0.5', fav: false, world: '', depth_prompt: { prompt: '', depth: 4, role: 'system' } },
+        },
+    };
+}
+
+const isAssistant = c => !!c?.card?.data?.extensions?.reverie?.assistant;
+
+export async function addAssistant() {
+    const avatar = await fsp.readFile(new URL('../assets/assistant.png', import.meta.url)).catch(() => null);
+    return createFromCard(assistantCard(), avatar);
+}
+
+/** On startup: add the Assistant the first time Reverie runs with this data folder. */
+export async function seedAssistant() {
+    if (await fsp.access(ASSISTANT_MARK).then(() => true, () => false)) return;
+    const all = await listJson(DIRS.characters);
+    if (!all.some(x => isAssistant(x.data))) await addAssistant();
+    await fsp.writeFile(ASSISTANT_MARK, `${new Date().toISOString()}\n`);
+}
+
+router.post('/assistant', async (_req, res) => {
+    const all = await listJson(DIRS.characters);
+    const existing = all.find(x => isAssistant(x.data));
+    res.json(existing ? existing.data : await addAssistant());
+});
+
 router.get('/', async (_req, res) => {
     const all = await listJson(DIRS.characters);
     res.json(all.map(x => summarize(x.data)).sort((a, b) => (b.lastChat || b.updated) - (a.lastChat || a.updated)));
@@ -58,15 +108,24 @@ router.post('/', async (req, res) => {
     res.json(character);
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', (req, res) => withLock(`character:${req.params.id}`, async () => {
     const c = await load(req.params.id);
     if (req.body.card) c.card = normalizeCard(req.body.card);
+    // Partial updates merge into the saved card, so a writer that only changes a few fields (an editor, the
+    // sheet, a banner, an extension) never overwrites other changes with an out-of-date copy of the card.
+    if (req.body.data && typeof req.body.data === 'object' && !Array.isArray(req.body.data)) {
+        const { extensions, ...fields } = req.body.data;
+        c.card = normalizeCard({ ...c.card, data: { ...c.card.data, ...fields } });
+    }
+    if (req.body.extensions && typeof req.body.extensions === 'object' && !Array.isArray(req.body.extensions)) {
+        c.card.data.extensions = { ...(c.card.data.extensions || {}), ...req.body.extensions };
+    }
     if ('fav' in req.body) c.fav = !!req.body.fav;
     if ('lastChat' in req.body) c.lastChat = req.body.lastChat;
     c.updated = Date.now();
     await writeJson(charFile(c.id), c);
     res.json(c);
-});
+}));
 
 router.delete('/:id', async (req, res) => {
     const c = await load(req.params.id);

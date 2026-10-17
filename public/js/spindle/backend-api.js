@@ -179,12 +179,11 @@ const charactersApi = {
     async update(_ext, id, patch = {}) {
         const c = await loadCharacter(id);
         if (!c) throw notFound('Character');
-        const card = structuredClone(c.card);
+        const data = {};
         for (const k of ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example', 'creator_notes', 'system_prompt', 'post_history_instructions', 'tags', 'alternate_greetings', 'creator']) {
-            if (patch[k] !== undefined) card.data[k] = patch[k];
+            if (patch[k] !== undefined) data[k] = patch[k];
         }
-        if (patch.extensions) card.data.extensions = { ...(card.data.extensions || {}), ...patch.extensions };
-        const saved = await api.put(`characters/${encodeURIComponent(id)}`, { card });
+        const saved = await api.put(`characters/${encodeURIComponent(id)}`, { data, ...(patch.extensions ? { extensions: patch.extensions } : {}) });
         if (state.character?.id === id) state.character = saved;
         return characterDto(saved);
     },

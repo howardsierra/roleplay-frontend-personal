@@ -34,6 +34,23 @@ export async function openCharacterBrowser() {
     const tagRow = el('div', { class: 'chip-row browser-tags' });
     const count = el('span', { class: 'hint browser-count' });
     let close = () => {};
+    // Select mode: tap tiles to pick several, then delete them together.
+    let selecting = false;
+    const picked = new Set();
+    const selectBar = el('div', { class: 'browser-select-bar hidden' });
+    const paintSelectBar = () => {
+        selectBar.classList.toggle('hidden', !selecting);
+        grid.classList.toggle('selecting', selecting);
+        selectBtn.classList.toggle('active', selecting);
+        selectBar.replaceChildren(
+            el('span', { class: 'grow' }, picked.size ? `${picked.size} selected` : 'Tap characters to select them'),
+            el('button', { class: 'btn small', onclick: () => { grid.querySelectorAll('.char-tile').forEach(t => picked.add(t.dataset.id)); paint(); } }, 'Select all shown'),
+            el('button', { class: 'btn small', onclick: () => { selecting = false; picked.clear(); paint(); } }, 'Cancel'),
+            el('button', { class: 'btn small danger', disabled: !picked.size, onclick: async () => {
+                if (await chars.deleteCharacters([...picked])) { picked.clear(); selecting = false; paint(); }
+            } }, icon('trash-can'), picked.size ? `Delete ${picked.size}` : 'Delete'));
+    };
+    const selectBtn = el('button', { class: 'btn', title: 'Select characters to delete', onclick: () => { selecting = !selecting; picked.clear(); paint(); } }, icon('square-check'), el('span', {}, 'Select'));
 
     const allTags = () => {
         const counts = new Map();
@@ -51,7 +68,17 @@ export async function openCharacterBrowser() {
         list = [...list].sort(sort === 'name' ? (a, b) => a.name.localeCompare(b.name)
             : sort === 'new' ? (a, b) => (b.created || b.updated || 0) - (a.created || a.updated || 0)
                 : (a, b) => (b.fav - a.fav) || ((b.lastChat || b.updated) - (a.lastChat || a.updated)));
-        grid.replaceChildren(...list.map(c => chars.cardTile(c, { onPick: picked => { close(); chars.showCharacterProfile(picked.id); } })));
+        grid.replaceChildren(...list.map(c => {
+            const tile = chars.cardTile(c, { onPick: one => {
+                if (!selecting) { close(); chars.showCharacterProfile(one.id); return; }
+                picked.has(one.id) ? picked.delete(one.id) : picked.add(one.id);
+                tile.classList.toggle('picked', picked.has(one.id));
+                paintSelectBar();
+            } });
+            tile.classList.toggle('picked', picked.has(c.id));
+            return tile;
+        }));
+        paintSelectBar();
         if (!list.length) grid.append(el('div', { class: 'empty wide' }, state.characters.length ? 'No characters match.' : 'No characters yet. Import a card or create one.'));
         count.textContent = `${list.length} of ${state.characters.length}`;
         paintTags();
@@ -69,9 +96,19 @@ export async function openCharacterBrowser() {
             el('div', { class: 'browser-bar' },
                 el('label', { class: 'gsearch-box browser-search' }, icon('magnifying-glass'), search),
                 sortSel,
+                selectBtn,
                 el('button', { class: 'btn', onclick: () => { close(); chars.importCharacter(); } }, icon('file-import'), el('span', {}, 'Import')),
-                el('button', { class: 'btn primary', onclick: () => { close(); chars.createCharacter(); } }, icon('plus'), el('span', {}, 'Create'))),
+                el('button', { class: 'btn primary', onclick: () => { close(); chars.createCharacter(); } }, icon('plus'), el('span', {}, 'Create')),
+                state.characters.some(c => c.assistant) ? null
+                    : el('button', { class: 'btn', title: 'Add Reverie’s built-in Assistant back', onclick: async () => {
+                        const { api } = await import('./api.js');
+                        await api.post('characters/assistant', {});
+                        await chars.loadCharacters();
+                        close();
+                        openCharacterBrowser();
+                    } }, icon('wand-magic-sparkles'), el('span', {}, 'Add the Assistant'))),
             el('div', { class: 'browser-meta' }, tagRow, count),
+            selectBar,
             grid),
         buttons: [],
         onOpen: (_b, c) => { close = c; paint(); if (!matchMedia('(hover: none)').matches) setTimeout(() => search.focus(), 50); },

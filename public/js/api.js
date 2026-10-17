@@ -33,28 +33,37 @@ export async function streamCompletion(body, { onText, onReasoning, signal }) {
         signal,
     });
     if (!res.ok) await handle(res);
+    if (!String(res.headers.get('content-type') || '').includes('text/event-stream')) {
+        throw new Error('The server answered with something other than a reply stream (a proxy or login page?)');
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let result = {};
+    const handleLine = line => {
+        if (!line.startsWith('data:')) return; // comments / keep-alives
+        let msg;
+        try { msg = JSON.parse(line.slice(5).trim()); } catch { return; } // a garbled line shouldn't end the reply
+        if (msg.error) throw new Error(msg.error);
+        if (msg.t) onText?.(msg.t);
+        if (msg.r) onReasoning?.(msg.r);
+        if (msg.done) result = msg;
+    };
     for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
         let idx;
-        while ((idx = buffer.indexOf('\n\n')) >= 0) {
-            const block = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-            for (const line of block.split('\n')) {
-                if (!line.startsWith('data: ')) continue;
-                const msg = JSON.parse(line.slice(6));
-                if (msg.error) throw new Error(msg.error);
-                if (msg.t) onText?.(msg.t);
-                if (msg.r) onReasoning?.(msg.r);
-                if (msg.done) result = msg;
-            }
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 1);
+            if (line) handleLine(line);
         }
     }
+    buffer += decoder.decode();
+    if (buffer.trim()) handleLine(buffer.trim());
+    // No "done" from the server: the connection dropped part-way (a timeout, a restart…).
+    if (!result.done) throw new Error('The connection dropped before the reply was finished');
     return result;
 }
 

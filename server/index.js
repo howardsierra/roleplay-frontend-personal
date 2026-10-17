@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DATA_DIR, DIRS, ensureDirs } from './lib/storage.js';
 import { collectionRouter } from './routes/collection.js';
-import charactersRouter from './routes/characters.js';
+import charactersRouter, { seedAssistant } from './routes/characters.js';
 import chatsRouter from './routes/chats.js';
 import aiRouter from './routes/ai.js';
 import filesRouter from './routes/files.js';
@@ -22,6 +22,10 @@ const HOST = process.env.HOST || '0.0.0.0';
 const PASSWORD = process.env.APP_PASSWORD || '';
 
 ensureDirs();
+
+// A personal server should stay up: log anything that slips through instead of exiting.
+process.on('unhandledRejection', err => console.error('[unhandled rejection]', err));
+process.on('uncaughtException', err => console.error('[uncaught exception]', err));
 
 // ---------- auth (single shared password, signed cookie) ----------
 const secretFile = path.join(DATA_DIR, '.session-secret');
@@ -50,18 +54,30 @@ function isAuthed(req) {
     return sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
 }
 
+// Wrong-password limits: 8 a minute per address, and 30 a minute overall (so faking addresses doesn't help).
 const attempts = new Map();
+let recentFailures = [];
 function tooManyAttempts(ip) {
     const now = Date.now();
-    const list = (attempts.get(ip) || []).filter(t => now - t < 60_000);
-    attempts.set(ip, list);
-    return list.length >= 8;
+    recentFailures = recentFailures.filter(t => now - t < 60_000);
+    for (const [key, list] of attempts) {
+        const fresh = list.filter(t => now - t < 60_000);
+        if (fresh.length) attempts.set(key, fresh); else attempts.delete(key);
+    }
+    return (attempts.get(ip)?.length || 0) >= 8 || recentFailures.length >= 30;
+}
+function recordFailure(ip) {
+    const now = Date.now();
+    if (attempts.size > 5000) attempts.clear();
+    attempts.set(ip, [...(attempts.get(ip) || []), now]);
+    recentFailures.push(now);
 }
 
 const app = express();
-app.set('trust proxy', true);
+// Only trust as many proxies as are really in front of us (Railway: one), so X-Forwarded-For can't be spoofed.
+const trustProxy = process.env.TRUST_PROXY ?? ((process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID) ? '1' : 'loopback');
+app.set('trust proxy', /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true' ? true : trustProxy === 'false' ? false : trustProxy);
 app.disable('x-powered-by');
-app.use(express.json({ limit: '64mb' }));
 
 app.use((_req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
@@ -69,14 +85,14 @@ app.use((_req, res, next) => {
     next();
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', express.json({ limit: '4kb' }), (req, res) => {
     if (!PASSWORD) return res.json({ ok: true });
     const ip = req.ip;
     if (tooManyAttempts(ip)) return res.status(429).json({ error: 'Too many attempts. Wait a minute.' });
     const given = Buffer.from(String(req.body?.password ?? ''));
     const wanted = Buffer.from(PASSWORD);
     if (given.length !== wanted.length || !crypto.timingSafeEqual(given, wanted)) {
-        attempts.get(ip).push(Date.now());
+        recordFailure(ip);
         return res.status(401).json({ error: 'Wrong password' });
     }
     const expires = String(Date.now() + SESSION_DAYS * 864e5);
@@ -111,6 +127,8 @@ app.use((req, res, next) => {
     if (req.method === 'GET' && (req.path === '/' || req.path.endsWith('.html'))) return res.redirect('/login.html');
     return res.status(401).end();
 });
+// Request bodies are only read once you're logged in.
+app.use(express.json({ limit: '64mb' }));
 
 // ---------- API ----------
 // SillyTavern-compatible endpoints first: some share a prefix with Reverie's own routes.
@@ -176,6 +194,7 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, HOST, () => {
     startSpindle().catch(err => console.error('Lumiverse extensions failed to start', err));
+    seedAssistant().catch(err => console.error('Could not add the Assistant', err));
     // A snapshot of your data on the server once a day (the last few are kept; see Settings → More → Backup).
     setTimeout(() => dailySnapshot(), 60 * 1000).unref();
     setInterval(() => dailySnapshot(), 60 * 60 * 1000).unref();
