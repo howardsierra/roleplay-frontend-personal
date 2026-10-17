@@ -26,9 +26,32 @@ function sync() {
     active = now;
 }
 
+/**
+ * On wide screens a drawer doesn't hide every overlay, but small launcher buttons that extensions pin to the
+ * screen edges would sit on top of an open side panel and catch its clicks; those step aside while it's open.
+ */
+function clearDrawers() {
+    const open = phone() ? [] : [...document.querySelectorAll('.drawer.open')].map(d => d.getBoundingClientRect()).filter(r => r.width && r.height);
+    for (const n of document.body.children) {
+        if (n.hasAttribute('data-rv-step-aside') && !n.hasAttribute('data-rv-clear-drawer')) continue;
+        let hide = false;
+        if (open.length && !CORE.has(n.id) && !IGNORE_TAGS.has(n.tagName) && !n.classList.contains('modal-wrap') && !n.classList.contains('ctx-menu')) {
+            n.removeAttribute('data-rv-clear-drawer'); // measure where it really is
+            const r = n.getBoundingClientRect();
+            const small = r.width > 0 && r.width <= 280 && r.height <= 180;
+            hide = small && getComputedStyle(n).position === 'fixed'
+                && open.some(d => r.left < d.right && r.right > d.left && r.top < d.bottom && r.bottom > d.top);
+        }
+        n.toggleAttribute('data-rv-clear-drawer', hide);
+    }
+}
+
 export function bindStepAside() {
     let queued = false;
-    const later = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; sync(); }); } };
+    const later = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; sync(); clearDrawers(); }); } };
+    // Drawers slide in; measure again once they've arrived.
+    document.addEventListener('transitionend', e => { if (e.target.classList?.contains('drawer')) later(); });
+    addEventListener('resize', later);
     new MutationObserver(later).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
     matchMedia('(max-width: 760px)').addEventListener('change', later);
 }

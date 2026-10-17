@@ -101,10 +101,11 @@ function bindUi() {
         strip.scrollLeft += e.deltaY;
         e.preventDefault();
     }, { passive: false });
-    $id('btn-library').addEventListener('click', () => toggleDrawer('left-nav-panel'));
+    $id('btn-menu').addEventListener('click', () => toggleDrawer('left-nav-panel'));
+    $id('btn-library').addEventListener('click', () => { closeAllDrawers(); import('./browse.js').then(m => m.openCharacterBrowser()); });
     $id('btn-settings').addEventListener('click', () => openSettings());
     $id('btn-gallery').addEventListener('click', openGallery);
-    $id('chat-title').addEventListener('click', () => (state.character ? showChatList() : openDrawer('left-nav-panel')));
+    $id('chat-title').addEventListener('click', () => (state.character ? showChatList() : import('./browse.js').then(m => m.openStorySwitcher())));
     $id('scrim').addEventListener('click', closeAllDrawers);
     document.querySelectorAll('.drawer-close').forEach(b => b.addEventListener('click', closeAllDrawers));
     document.addEventListener('click', e => {
