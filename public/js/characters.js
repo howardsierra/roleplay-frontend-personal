@@ -6,7 +6,7 @@ import { eventSource, event_types } from './events.js';
 import { substituteParams } from './macros.js';
 import { printMessages, clearChat, nowDate } from './chat.js';
 import { applyTheme } from './themes.js';
-import { el, icon, toast, modal, confirmDialog, promptDialog, pickFile, closeAllDrawers, toPngBlob, download, escapeHtml, field, textArea, textInput } from './ui.js';
+import { el, icon, toast, modal, confirmDialog, promptDialog, pickFile, closeAllDrawers, toPngBlob, download, escapeHtml, field, textArea, textInput, select } from './ui.js';
 import { normalizeWorld } from './worldinfo.js';
 
 const avatarUrl = c => (c?.avatar ? `files/avatars/${encodeURIComponent(c.avatar)}` : 'icons/icon.svg');
@@ -417,6 +417,8 @@ export async function editCharacter(id, { isNew = false } = {}) {
     const d = structuredClone(character.card.data);
     d.alternate_greetings ??= [];
     d.tags ??= [];
+    d.extensions ??= {};
+    const depthPrompt = d.extensions.depth_prompt = { prompt: '', depth: 4, role: 'system', ...(d.extensions.depth_prompt || {}) };
     const avatarImg = el('img', { class: 'editor-avatar', src: avatarUrl(character) });
     const greetingsBox = el('div', { class: 'stack' });
     const renderGreetings = () => {
@@ -450,10 +452,19 @@ export async function editCharacter(id, { isNew = false } = {}) {
             field('Personality summary', textArea(d.personality, v => { d.personality = v; }, { rows: 3 })),
             field('Scenario', textArea(d.scenario, v => { d.scenario = v; }, { rows: 4 })),
             field('Example dialogue', textArea(d.mes_example, v => { d.mes_example = v; }, { rows: 8, placeholder: '<START>\n{{user}}: Hi!\n{{char}}: *waves* Hello!' }), 'Separate examples with <START>.'),
-            field('Character note (creator notes)', textArea(d.creator_notes, v => { d.creator_notes = v; }, { rows: 4 }))),
+            field('Creator notes', textArea(d.creator_notes, v => { d.creator_notes = v; }, { rows: 4 }), 'For you, not the AI: shown on the profile, never sent with the prompt.')),
         Prompts: el('div', { class: 'stack' },
             field('Main prompt override', textArea(d.system_prompt, v => { d.system_prompt = v; }, { rows: 6 }), 'Replaces the preset main prompt when “Prefer character prompt” is on. Use {{original}} to include the preset version.'),
             field('Post-history instructions', textArea(d.post_history_instructions, v => { d.post_history_instructions = v; }, { rows: 6 }), 'Replaces the preset post-history instructions. {{original}} works here too.'),
+            field("Character's Note", textArea(depthPrompt.prompt, v => { depthPrompt.prompt = v; }, { rows: 4 }), 'A reminder slipped into the chat a few messages from the end every turn, so it never drifts out of view (SillyTavern’s Character’s Note).'),
+            el('div', { class: 'grid-2' },
+                field('Note depth', (() => {
+                    const i = el('input', { class: 'input', type: 'number', min: 0 });
+                    i.value = depthPrompt.depth;
+                    i.addEventListener('input', () => { depthPrompt.depth = Math.max(0, Number(i.value) || 0); });
+                    return i;
+                })(), '0 = after the last message.'),
+                field('Note role', select([['system', 'System'], ['user', 'User'], ['assistant', 'Assistant']], depthPrompt.role, v => { depthPrompt.role = v; }))),
             field('Linked lorebook (name)', textInput(d.extensions?.world || '', v => { d.extensions = { ...(d.extensions || {}), world: v }; })),
             field('Character version', textInput(d.character_version, v => { d.character_version = v; }))),
         Banner: el('div', { class: 'stack' },
@@ -505,7 +516,9 @@ export async function editCharacter(id, { isNew = false } = {}) {
         saving = saving.then(async () => {
             // Only the fields this editor owns: banners and extensions save their own parts of the card.
             const { extensions, ...fields } = structuredClone(d);
-            const saved = await api.put(`characters/${encodeURIComponent(id)}`, { data: fields, extensions: { world: extensions?.world || '' } });
+            const ext = { world: extensions?.world || '' };
+            if (extensions?.depth_prompt) ext.depth_prompt = extensions.depth_prompt;
+            const saved = await api.put(`characters/${encodeURIComponent(id)}`, { data: fields, extensions: ext });
             character.card = saved.card;
             if (state.character?.id === id) {
                 state.character = { ...state.character, ...saved };

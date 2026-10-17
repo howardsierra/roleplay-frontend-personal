@@ -2,14 +2,14 @@
 import { placement, PERSONA_POSITION } from './personas.js';
 import { messageId } from './message-ids.js';
 import { state, currentPersona, charName, userName, chatMetadata } from './state.js';
-import { substituteParams, readVariable, variables } from './macros.js';
+import { substituteParams, readVariable, variables, setPromptLore } from './macros.js';
 import { evaluateCondition, modelMatches } from './conditions.js';
 import { points } from './rv-ext/points.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { stripReasoning } from './reasoning.js';
 import { scanWorldInfo } from './worldinfo.js';
 import { eventSource, event_types } from './events.js';
-import { STRUCTURAL_MARKERS } from './presets.js';
+import { STRUCTURAL_MARKERS, MARKER_NAMES } from './presets.js';
 
 export const extension_prompt_types = { NONE: -1, IN_PROMPT: 0, IN_CHAT: 1, BEFORE_PROMPT: 2 };
 export const extension_prompt_roles = { SYSTEM: 0, USER: 1, ASSISTANT: 2 };
@@ -24,6 +24,51 @@ export function setExtensionPrompt(key, value, position = 0, depth = 4, scan = f
 
 const ROLE_NAMES = ['system', 'user', 'assistant'];
 export const estimateTokens = text => Math.ceil(String(text ?? '').length / 3.6);
+
+// Other tools name the structural blocks differently (Lumiverse, older ST exports, hand-made presets).
+const MARKER_ALIASES = {
+    persona: 'persona_description', user_persona: 'persona_description', personadescription: 'persona_description',
+    description: 'char_description', character_description: 'char_description', chardescription: 'char_description',
+    personality: 'char_personality', character_personality: 'char_personality', charpersonality: 'char_personality',
+    world_scenario: 'scenario', char_scenario: 'scenario',
+    examples: 'dialogue_examples', example_messages: 'dialogue_examples', mes_example: 'dialogue_examples', example_dialogue: 'dialogue_examples', chat_examples: 'dialogue_examples',
+    world_info: 'world_info_before', wi_before: 'world_info_before', lore_before: 'world_info_before', worldinfobefore: 'world_info_before',
+    wi_after: 'world_info_after', lore_after: 'world_info_after', worldinfoafter: 'world_info_after',
+    history: 'chat_history', chathistory: 'chat_history',
+    main: 'main_prompt', system_prompt: 'main_prompt',
+    post_history: 'jailbreak', post_history_instructions: 'jailbreak', posthistoryinstructions: 'jailbreak',
+};
+const markerOf = block => {
+    const m = block.marker;
+    if (!m || typeof m !== 'string') return m || null;
+    const k = m.toLowerCase();
+    return MARKER_ALIASES[k] || k;
+};
+
+// The macros that pull each part of the card/persona/lore in. A preset that has neither the block nor
+// the macro would silently leave that part out, so it's added before the history instead.
+const FIELD_SOURCES = {
+    char_description: /\{\{\s*(?:description|chardescription)\s*\}\}/i,
+    char_personality: /\{\{\s*(?:personality|charpersonality)\s*\}\}/i,
+    scenario: /\{\{\s*(?:scenario|charscenario)\s*\}\}/i,
+    persona_description: /\{\{\s*(?:persona|persona_description)\s*\}\}/i,
+    dialogue_examples: /\{\{\s*mesexamples(?:raw)?\s*\}\}/i,
+    world_info_before: /\{\{\s*(?:wibefore|lorebefore)\s*\}\}/i,
+    world_info_after: /\{\{\s*(?:wiafter|loreafter)\s*\}\}/i,
+};
+function missingParts(preset) {
+    const present = new Set();
+    for (const b of preset.blocks) {
+        // Blocks the user switched off still count: that part was left out on purpose.
+        const m = markerOf(b);
+        if (m) present.add(m);
+        for (const [part, rx] of Object.entries(FIELD_SOURCES)) if (rx.test(b.content || '')) present.add(part);
+    }
+    for (const ep of Object.values(extensionPrompts)) {
+        for (const [part, rx] of Object.entries(FIELD_SOURCES)) if (rx.test(ep.value || '')) present.add(part);
+    }
+    return new Set(Object.keys(FIELD_SOURCES).filter(p => !present.has(p)));
+}
 
 function formatWith(template, value) {
     return String(template || '{0}').replace(/\{0\}/g, value);
@@ -100,7 +145,9 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     // Visible history (hidden/system messages excluded).
     const history = chat.filter(m => !m.is_system);
-    const lore = await scanWorldInfo(history, { contextTokens: contextSize });
+    const lore = await scanWorldInfo(history, { contextTokens: contextSize, dryRun });
+    // {{wiBefore}}, {{wiAfter}} and {{outlet::name}} in any block or note.
+    setPromptLore(lore);
     if (lore.activated.length) eventSource.emit(event_types.WORLD_INFO_ACTIVATED, lore.activated);
     if (!dryRun) lastLoreHits = lore.activated;
 
@@ -126,29 +173,48 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     const personaPlacement = placement();
     const condCtx = conditionContext(type, history);
+    const part = name => {
+        switch (name) {
+            case 'world_info_before': return lore.before ? formatWith(preset.formats.wiFormat, lore.before) : '';
+            case 'world_info_after': return lore.after ? formatWith(preset.formats.wiFormat, lore.after) : '';
+            case 'char_description': return substituteParams(data.description);
+            case 'char_personality': return data.personality ? substituteParams(preset.formats.personalityFormat || '{{personality}}') : '';
+            case 'scenario': {
+                const scenario = chatMetadata().scenario || data.scenario;
+                return scenario ? substituteParams(preset.formats.scenarioFormat || '{{scenario}}', { scenario }) : '';
+            }
+            case 'persona_description': return personaPlacement.position === PERSONA_POSITION.IN_PROMPT ? substituteParams(currentPersona().description) : '';
+            default: return '';
+        }
+    };
+    // Example dialogue, with the lorebook's "before/after examples" entries around it.
+    let examplesDone = false;
+    const pushExamples = () => {
+        if (examplesDone) return;
+        examplesDone = true;
+        if (lore.emTop) push('system', formatWith(preset.formats.wiFormat, lore.emTop), 'World Info (before examples)');
+        for (const ex of exampleMessages(preset)) push(ex.role, ex.content, 'Example dialogue');
+        if (lore.emBottom) push('system', formatWith(preset.formats.wiFormat, lore.emBottom), 'World Info (after examples)');
+    };
+    const missing = missingParts(preset);
     for (const block of preset.blocks) {
         if (!block.enabled || !blockTriggered(block, type) || !tagTriggered(block) || !conditionMet(block, condCtx)) continue;
         const role = block.role || 'system';
         const label = block.name;
-        if (block.marker === 'chat_history') {
+        const marker = markerOf(block);
+        if (marker === 'chat_history') {
             sawHistory = true;
             target = after;
             continue;
         }
         let content = '';
-        switch (block.marker) {
-            case 'world_info_before': content = lore.before ? formatWith(preset.formats.wiFormat, lore.before) : ''; break;
-            case 'world_info_after': content = lore.after ? formatWith(preset.formats.wiFormat, lore.after) : ''; break;
-            case 'char_description': content = substituteParams(data.description); break;
-            case 'char_personality': content = data.personality ? substituteParams(preset.formats.personalityFormat || '{{personality}}') : ''; break;
-            case 'scenario': {
-                const scenario = chatMetadata().scenario || data.scenario;
-                content = scenario ? substituteParams(preset.formats.scenarioFormat || '{{scenario}}', { scenario }) : '';
+        switch (marker) {
+            case 'world_info_before': case 'world_info_after': case 'char_description': case 'char_personality':
+            case 'scenario': case 'persona_description':
+                content = part(marker);
                 break;
-            }
-            case 'persona_description': content = personaPlacement.position === PERSONA_POSITION.IN_PROMPT ? substituteParams(currentPersona().description) : ''; break;
             case 'dialogue_examples':
-                for (const ex of exampleMessages(preset)) push(ex.role, ex.content, 'Example dialogue');
+                pushExamples();
                 continue;
             case 'main_prompt': {
                 const own = gen.preferCharPrompt && data.system_prompt?.trim();
@@ -175,6 +241,33 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
         push(role, content, label);
     }
 
+    // Parts of the card, persona or lore the preset has no place for still go in, ahead of the history,
+    // in SillyTavern's default order.
+    if (missing.size) {
+        const fallback = [];
+        for (const name of ['world_info_before', 'persona_description', 'char_description', 'char_personality', 'scenario', 'world_info_after']) {
+            if (!missing.has(name)) continue;
+            const text = part(name);
+            if (text.trim()) fallback.push({ role: 'system', content: text, __label: `${MARKER_NAMES[name] || name} (added: not in preset)` });
+        }
+        before.push(...fallback);
+        for (const f of fallback) breakdown.push({ label: f.__label, role: 'system', tokens: estimateTokens(f.content) });
+        if (missing.has('dialogue_examples')) {
+            const saved = target;
+            target = before;
+            pushExamples();
+            target = saved;
+        }
+    }
+    if (!examplesDone && (lore.emTop || lore.emBottom) && !missing.has('dialogue_examples')) {
+        // The examples block is off, but lore meant for that spot still belongs in the prompt.
+        const saved = target;
+        target = before;
+        if (lore.emTop) push('system', formatWith(preset.formats.wiFormat, lore.emTop), 'World Info (before examples)');
+        if (lore.emBottom) push('system', formatWith(preset.formats.wiFormat, lore.emBottom), 'World Info (after examples)');
+        target = saved;
+    }
+
     // IN_PROMPT extension prompts sit right before the history.
     for (const [key, ep] of Object.entries(extensionPrompts)) {
         if (ep.position === extension_prompt_types.IN_PROMPT && ep.value) {
@@ -185,8 +278,18 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     }
     for (const d of lore.depth) inChat.push({ ...d, label: 'World Info @ depth' });
 
-    // Author's note (per chat), ST-style at depth. The persona description can sit at its top or bottom.
+    // Character's Note (the card's depth_prompt): a reminder injected near the end of the chat.
+    const charNote = data.extensions?.depth_prompt;
+    if (charNote?.prompt?.trim()) {
+        const role = ['system', 'user', 'assistant'].includes(charNote.role) ? charNote.role : ROLE_NAMES[Number(charNote.role)] || 'system';
+        inChat.push({ content: substituteParams(charNote.prompt), depth: Number.isFinite(Number(charNote.depth)) ? Number(charNote.depth) : 4, role, label: "Character's Note" });
+    }
+
+    // Author's note (per chat), ST-style at depth. Lorebook entries and the persona description can sit at
+    // its top or bottom.
     let an = substituteParams(chatMetadata().note_prompt || '');
+    if (lore.anTop) an = an.trim() ? `${lore.anTop}\n${an}` : lore.anTop;
+    if (lore.anBottom) an = an.trim() ? `${an}\n${lore.anBottom}` : lore.anBottom;
     const personaText = substituteParams(currentPersona().description || '');
     if (personaText.trim() && personaPlacement.position === PERSONA_POSITION.AN_TOP) an = an.trim() ? `${personaText}\n${an}` : personaText;
     if (personaText.trim() && personaPlacement.position === PERSONA_POSITION.AN_BOTTOM) an = an.trim() ? `${an}\n${personaText}` : personaText;

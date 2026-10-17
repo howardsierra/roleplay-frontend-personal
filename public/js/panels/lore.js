@@ -61,10 +61,23 @@ export async function render(body) {
             slider('Scan depth (messages)', cfg.scanDepth, { min: 1, max: 30, step: 1, onChange: v => { cfg.scanDepth = v; saveSettingsDebounced(); } }),
             slider('Budget (% of context)', cfg.budgetPercent, { min: 5, max: 100, step: 1, onChange: v => { cfg.budgetPercent = v; saveSettingsDebounced(); } }),
             toggle('Recursive scanning', cfg.recursive, v => { cfg.recursive = v; saveSettingsDebounced(); }, 'Activated entries can trigger other entries.'),
-            toggle('Include names when scanning', cfg.includeNames, v => { cfg.includeNames = v; saveSettingsDebounced(); })));
+            toggle('Include names when scanning', cfg.includeNames, v => { cfg.includeNames = v; saveSettingsDebounced(); }),
+            toggle('Case-sensitive keys', !!cfg.caseSensitive, v => { cfg.caseSensitive = v; saveSettingsDebounced(); }, 'Default for entries that don\'t set their own.'),
+            toggle('Match whole words', !!cfg.matchWholeWords, v => { cfg.matchWholeWords = v; saveSettingsDebounced(); }, '“cat” won\'t trigger on “category”. Default for entries that don\'t set their own.'),
+            toggle('Group scoring', !!cfg.useGroupScoring, v => { cfg.useGroupScoring = v; saveSettingsDebounced(); }, 'In an inclusion group, the entry matching the most keywords wins.')));
 }
 
-const POSITIONS = [[0, 'Before character'], [1, 'After character'], [2, "Top of Author's Note"], [3, "Bottom of Author's Note"], [4, 'In chat @ depth'], [5, 'Before examples'], [6, 'After examples']];
+const POSITIONS = [[0, 'Before character'], [1, 'After character'], [2, "Top of Author's Note"], [3, "Bottom of Author's Note"], [4, 'In chat @ depth'], [5, 'Before examples'], [6, 'After examples'], [7, 'Outlet ({{outlet::name}})']];
+const TRISTATE = [['', 'Use global'], ['true', 'Yes'], ['false', 'No']];
+const tri = v => (v === null || v === undefined ? '' : String(!!v));
+const fromTri = v => (v === '' ? null : v === 'true');
+const splitList = v => v.split(',').map(s => s.trim()).filter(Boolean);
+function numInput(value, onChange, attrs = {}) {
+    const i = el('input', { class: 'input', type: 'number', ...attrs });
+    i.value = value ?? '';
+    i.addEventListener('input', () => onChange(i.value === '' ? null : Number(i.value)));
+    return i;
+}
 const LOGIC = [[0, 'AND ANY'], [1, 'NOT ALL'], [2, 'NOT ANY'], [3, 'AND ALL']];
 
 async function openWorld(id) {
@@ -128,9 +141,8 @@ function entryCard(world, key, e, refresh) {
             field('Role (@depth)', select([[0, 'System'], [1, 'User'], [2, 'Assistant']], e.role, v => { e.role = Number(v); }))),
         el('div', { class: 'row gap wrap' },
             toggle('Always on', e.constant, v => { e.constant = v; }),
-            toggle('Case sensitive', !!e.caseSensitive, v => { e.caseSensitive = v; }),
-            toggle('Whole words', !!e.matchWholeWords, v => { e.matchWholeWords = v; }),
             toggle('No recursion', e.preventRecursion, v => { e.preventRecursion = v; })),
+        advanced(e),
         el('button', { class: 'btn small danger', onclick: () => { delete world.entries[key]; refresh(); } }, icon('trash-can'), 'Delete entry'));
     const det = el('details', { class: `entry-card${e.disable ? ' off' : ''}` },
         el('summary', {},
@@ -145,4 +157,43 @@ function entryCard(world, key, e, refresh) {
         field('Title / memo', textInput(e.comment, v => { e.comment = v; })),
         body);
     return det;
+}
+
+// SillyTavern's finer controls: timing, groups, filters and extra text to match against.
+function advanced(e) {
+    e.characterFilter ??= { isExclude: false, names: [], tags: [] };
+    const cf = e.characterFilter;
+    return el('details', { class: 'entry-advanced' },
+        el('summary', {}, 'More options'),
+        el('div', { class: 'stack' },
+            el('div', { class: 'grid-3' },
+                field('Sticky (messages)', numInput(e.sticky || 0, v => { e.sticky = v || 0; }, { min: 0 }), 'Stays on this long after it triggers.'),
+                field('Cooldown (messages)', numInput(e.cooldown || 0, v => { e.cooldown = v || 0; }, { min: 0 }), "Can't trigger again for this long."),
+                field('Delay (messages)', numInput(e.delay || 0, v => { e.delay = v || 0; }, { min: 0 }), 'Only once the chat is this long.')),
+            el('div', { class: 'grid-3' },
+                field('Inclusion group', textInput(e.group || '', v => { e.group = v; }, { placeholder: 'weather' }), 'Only one entry per group goes in.'),
+                field('Group weight', numInput(e.groupWeight ?? 100, v => { e.groupWeight = v ?? 100; }, { min: 0 })),
+                field('Scan depth', numInput(e.scanDepth, v => { e.scanDepth = v || null; }, { min: 0, placeholder: 'global' }))),
+            el('div', { class: 'grid-3' },
+                field('Case sensitive', select(TRISTATE, tri(e.caseSensitive), v => { e.caseSensitive = fromTri(v); })),
+                field('Whole words', select(TRISTATE, tri(e.matchWholeWords), v => { e.matchWholeWords = fromTri(v); })),
+                field('Group scoring', select(TRISTATE, tri(e.useGroupScoring), v => { e.useGroupScoring = fromTri(v); }))),
+            field('Outlet name', textInput(e.outletName || '', v => { e.outletName = v; }), 'With position “Outlet”, the text appears wherever a preset block says {{outlet::name}}.'),
+            el('div', { class: 'grid-2' },
+                field('Only for characters', textInput((cf.names || []).join(', '), v => { cf.names = splitList(v); }, { placeholder: 'names, comma separated' })),
+                field('Only for tags', textInput((cf.tags || []).join(', '), v => { cf.tags = splitList(v); }))),
+            el('div', { class: 'row gap wrap' },
+                toggle('Exclude those instead', !!cf.isExclude, v => { cf.isExclude = v; }),
+                toggle('Prioritize in group', !!e.groupOverride, v => { e.groupOverride = v; }),
+                toggle('Ignore budget', !!e.ignoreBudget, v => { e.ignoreBudget = v; }),
+                toggle('Not triggered by other entries', !!e.excludeRecursion, v => { e.excludeRecursion = v; }),
+                toggle('Only triggered by other entries', !!e.delayUntilRecursion, v => { e.delayUntilRecursion = v; })),
+            el('span', { class: 'field-label' }, 'Also match keywords in'),
+            el('div', { class: 'row gap wrap' },
+                toggle('Persona description', !!e.matchPersonaDescription, v => { e.matchPersonaDescription = v; }),
+                toggle('Character description', !!e.matchCharacterDescription, v => { e.matchCharacterDescription = v; }),
+                toggle('Personality', !!e.matchCharacterPersonality, v => { e.matchCharacterPersonality = v; }),
+                toggle("Character's Note", !!e.matchCharacterDepthPrompt, v => { e.matchCharacterDepthPrompt = v; }),
+                toggle('Scenario', !!e.matchScenario, v => { e.matchScenario = v; }),
+                toggle('Creator notes', !!e.matchCreatorNotes, v => { e.matchCreatorNotes = v; }))));
 }
