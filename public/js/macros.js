@@ -139,6 +139,12 @@ function presetVarIsOn(name, keys) {
     return 'false';
 }
 
+// Lore from the prompt being built, for {{wiBefore}}, {{wiAfter}} and {{outlet::name}}.
+let promptLore = { before: '', after: '', outlets: {} };
+export function setPromptLore(lore) {
+    promptLore = { before: lore?.before || '', after: lore?.after || '', outlets: lore?.outlets || {} };
+}
+
 export function buildEnv(extra = {}) {
     const d = state.character?.card?.data ?? {};
     const persona = currentPersona();
@@ -147,8 +153,12 @@ export function buildEnv(extra = {}) {
         char: charName(),
         description: d.description ?? '',
         personality: d.personality ?? '',
-        scenario: d.scenario ?? '',
+        // A chat can override the card's scenario.
+        scenario: state.chatMeta?.chat_metadata?.scenario || d.scenario || '',
         persona: persona.description ?? '',
+        charDepthPrompt: d.extensions?.depth_prompt?.prompt ?? '',
+        wiBefore: promptLore.before,
+        wiAfter: promptLore.after,
         mesExamples: d.mes_example ?? '',
         mesExamplesRaw: d.mes_example ?? '',
         system: d.system_prompt ?? '',
@@ -179,7 +189,8 @@ function evaluate(name, args, env, raw) {
         creatornotes: env.creatorNotes, charfirstmessage: env.firstMessage, model: env.model, input: env.input,
         original: env.original, group: env.group, charifnotgroup: env.char, groupnotmuted: env.char,
         persona_description: env.persona, chardescription: env.description, charpersonality: env.personality,
-        charscenario: env.scenario,
+        charscenario: env.scenario, chardepthprompt: env.charDepthPrompt,
+        wibefore: env.wiBefore, lorebefore: env.wiBefore, wiafter: env.wiAfter, loreafter: env.wiAfter,
     };
     if (lower in simple && args === undefined) return stringify(simple[lower]);
     const now = new Date();
@@ -244,12 +255,13 @@ function evaluate(name, args, env, raw) {
             return presetVar(parts[0]);
         }
         case 'vardefault': return presetVar(args, true);
+        case 'outlet': return promptLore.outlets[String(args ?? '').trim()] ?? '';
         default: return null;
     }
 }
 
 const FIELD_MACROS = new Set(['description', 'personality', 'scenario', 'persona', 'mesexamples', 'system', 'charprompt',
-    'charinstruction', 'charjailbreak', 'chardescription', 'charpersonality', 'charscenario', 'persona_description', 'charfirstmessage', 'creatornotes']);
+    'charinstruction', 'charjailbreak', 'chardescription', 'charpersonality', 'charscenario', 'persona_description', 'charfirstmessage', 'creatornotes', 'chardepthprompt']);
 
 // Left-to-right evaluation; a macro's arguments are expanded before the macro itself runs,
 // so {{setvar::x::{{user}}}}{{getvar::x}} works as written.
