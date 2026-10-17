@@ -1651,3 +1651,15 @@ body.rv-prose-hold .mes.last_mes:not(.user_mes) .mes_block::after { content: 'âœ
     .tb-preset { max-width: 40%; }
 }
 @media (max-width: 380px) { #btn-rename-chat { display: none; } } /* also in the chat list */
+
+/* Settings tabs wrap onto a second row instead of hiding off the edge (a mouse can't swipe a hidden strip). */
+#settings-tabs { flex-wrap: wrap; overflow: visible; row-gap: 4px; }
+@media (max-width: 820px) { #settings-tabs .tab { padding: 7px 10px; font-size: .8em; gap: 6px; } }
+/* Other tab strips still scroll sideways: show a slim scrollbar where there's a mouse. */
+@media (hover: hover) and (pointer: fine) {
+    .tabs:not(#settings-tabs) { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--SmartThemeBodyColor) 22%, transparent) transparent; }
+    .tabs:not(#settings-tabs)::-webkit-scrollbar { display: block; height: 6px; }
+    .tabs:not(#settings-tabs)::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--SmartThemeBodyColor) 22%, transparent); border-radius: 6px; }
+}
+.nav-item > span.nav-state:not(.nav-actions) { flex: 0 0 auto; font-size: .72em; padding: 2px 8px; border-radius: 99px; color: var(--rv-text-faint); border: 1px solid var(--SmartThemeBorderColor); }
+.nav-item.on > .nav-state { color: var(--SmartThemeBodyColor); background: color-mix(in srgb, var(--rv-accent) 22%, transparent); border-color: color-mix(in srgb, var(--rv-accent) 45%, transparent); }
