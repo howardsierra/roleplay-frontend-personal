@@ -58,6 +58,16 @@ export async function streamCompletion(body, { onText, onReasoning, signal }) {
     return result;
 }
 
+/** One non-streamed reply. Inline thinking (<think>…</think>) is moved out of `text` into `reasoning`. */
 export async function completion(body, { signal } = {}) {
-    return api.post('generate', { ...body, stream: false }, { signal });
+    const res = await api.post('generate', { ...body, stream: false }, { signal });
+    if (typeof res?.text === 'string') {
+        const { splitReasoning } = await import('./reasoning.js');
+        const split = splitReasoning(res.text);
+        if (split.reasoning) {
+            res.text = split.text.trim();
+            res.reasoning = [res.reasoning, split.reasoning].filter(Boolean).join('\n\n');
+        }
+    }
+    return res;
 }

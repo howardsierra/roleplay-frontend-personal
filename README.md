@@ -171,6 +171,12 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
   - The title on Home opens **Your stories**, every recent chat across all characters.
   - Inside a story, the title lists that character's chats.
 - **Big screens:** from 1180px wide, Settings and dialogs get wider. From 1600px, the Look, More, Agents and Images settings sit in two columns, and the sidebar and character sheet grow.
+- **Thinking models:** inline `<think>…</think>` (also `<thinking>`, `<thought>`, `<reasoning>` and your own tags or markers) is folded into the collapsible *Thoughts* box.
+  - It never shows in the story, and it's never sent back to the model, not even from older messages.
+  - It works while streaming, when your prefill opens the tag, and with models whose template opens it (Reverie learns this per model).
+  - Agents and extensions get clean text.
+  - Settings → More → *Thinking*.
+- **Regex:** scripts that change the saved message also apply while a reply streams, so hidden blocks don't flash by. "Alter chat display" plus "Alter outgoing prompt" together now applies in both places, as in SillyTavern.
 - **Keyboard shortcuts:** press `?` to see them.
 - **Desktop mode:** *Desktop mode* in the sidebar (or Settings → Look → *Screen mode*) lays Reverie out like on a computer on this device. You get the sidebar and character sheet side by side, and you can pinch to zoom. *Tablet* is a middle size. It's remembered per device.
 

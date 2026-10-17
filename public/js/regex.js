@@ -80,10 +80,11 @@ export function applyRegex(text, placement, { isMarkdown = false, isPrompt = fal
     let out = text;
     for (const script of allScripts()) {
         if (!(script.placement || []).map(Number).includes(placement)) continue;
-        // ST semantics: markdownOnly → display only; promptOnly → outgoing prompt only; neither → baked into the message.
-        if (script.markdownOnly && !isMarkdown) continue;
-        if (script.promptOnly && !isPrompt) continue;
-        if (!script.markdownOnly && !script.promptOnly && (isMarkdown || isPrompt)) continue;
+        // ST semantics: "Alter chat display" (markdownOnly) runs when showing a message, "Alter outgoing prompt"
+        // (promptOnly) when sending history; both ticked → both places; neither → baked into the saved message.
+        if (script.markdownOnly || script.promptOnly) {
+            if (!((script.markdownOnly && isMarkdown) || (script.promptOnly && isPrompt))) continue;
+        } else if (isMarkdown || isPrompt) continue;
         if (isEdit && script.runOnEdit === false) continue;
         if (depth !== undefined && depth !== null) {
             const min = script.minDepth ?? -1;

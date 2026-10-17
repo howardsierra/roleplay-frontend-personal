@@ -6,6 +6,7 @@ import { substituteParams, readVariable, variables } from './macros.js';
 import { evaluateCondition, modelMatches } from './conditions.js';
 import { points } from './rv-ext/points.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
+import { stripReasoning } from './reasoning.js';
 import { scanWorldInfo } from './worldinfo.js';
 import { eventSource, event_types } from './events.js';
 import { STRUCTURAL_MARKERS } from './presets.js';
@@ -200,7 +201,8 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     const names = Number(preset.completion.namesBehavior);
     let historyMsgs = history.map((m, i) => {
         const depth = history.length - 1 - i;
-        let content = applyRegex(m.mes ?? '', m.is_user ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT, { isPrompt: true, depth });
+        // Thinking never goes back to the model as part of the story.
+        let content = applyRegex(m.is_user ? (m.mes ?? '') : stripReasoning(m.mes ?? ''), m.is_user ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT, { isPrompt: true, depth });
         if (names === 2) content = `${m.name}: ${content}`;
         const out = { role: m.is_user ? 'user' : 'assistant', content, __src: { id: messageId(m), index: chat.indexOf(m) } };
         if (names === 1 && m.name) out.name = m.name.replace(/[^\w-]/g, '_').slice(0, 64);
@@ -244,7 +246,7 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     let prefill = '';
     const lastMsg = history.at(-1);
     if (type === 'continue' && lastMsg) {
-        const cont = applyRegex(lastMsg.mes ?? '', lastMsg.is_user ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT, { isPrompt: true, depth: 0 });
+        const cont = applyRegex(lastMsg.is_user ? (lastMsg.mes ?? '') : stripReasoning(lastMsg.mes ?? ''), lastMsg.is_user ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT, { isPrompt: true, depth: 0 });
         if (preset.completion.continuePrefill) {
             prefill = cont + (preset.completion.continuePostfix ?? '');
         } else {

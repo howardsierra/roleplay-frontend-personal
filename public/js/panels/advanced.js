@@ -26,6 +26,7 @@ export async function render(body) {
             toggle('Prefer character post-history instructions', g.preferCharInstructions, v => { g.preferCharInstructions = v; save(); }),
             toggle('Trim incomplete sentences', g.trimIncomplete, v => { g.trimIncomplete = v; save(); }),
             toggle('Ask what to change when regenerating', g.askOnRegenerate, v => { g.askOnRegenerate = v; save(); }, 'Otherwise, long-press (or right-click) the → arrow, or use “Regenerate with a note…” in the ⋯ and ✨ menus.')),
+        thinkingSection(),
         await voiceSection(),
         alertsSection(),
         section('Rich content',
@@ -92,4 +93,17 @@ function alertsSection() {
             save();
         }, denied ? 'Blocked in your browser’s site settings.' : 'Only when Reverie isn’t on screen. On iPhone and iPad, add Reverie to your Home Screen first.')) : null);
     return out;
+}
+
+function thinkingSection() {
+    const r = state.settings.reasoning || (state.settings.reasoning = { autoParse: true, tags: '', prefix: '', suffix: '' });
+    const save = () => { saveSettingsDebounced(); printMessages(); };
+    return section('Thinking (reasoning models)',
+        toggle('Move inline thinking into “Thoughts”', r.autoParse !== false, v => { r.autoParse = v; save(); },
+            'Models like DeepSeek R1, QwQ and GLM write <think>…</think> inside the reply. Reverie folds it into the collapsible Thoughts box and never sends it back to the model. Also works when your preset’s prefill opens the tag.'),
+        field('Other tag names', textInput(r.tags || '', v => { r.tags = v; save(); }, { placeholder: 'e.g. scratchpad, plan' }), 'Comma-separated. Already recognised: think, thinking, thought, thoughts, reasoning, reflection.'),
+        el('div', { class: 'grid-2' },
+            field('Custom start', textInput(r.prefix || '', v => { r.prefix = v; save(); }, { placeholder: 'e.g. [THINK]' })),
+            field('Custom end', textInput(r.suffix || '', v => { r.suffix = v; save(); }, { placeholder: 'e.g. [/THINK]' }))),
+        toggle('Thoughts start collapsed', state.settings.render.reasoningCollapsed !== false, v => { state.settings.render.reasoningCollapsed = v; save(); }));
 }
