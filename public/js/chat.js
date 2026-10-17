@@ -1,10 +1,11 @@
 // Chat view + generation flows (send, swipe/regenerate, continue, impersonate, quiet).
-import { state, saveChat, saveChatDebounced, charName, userName, currentPersona, chatMetadata, connectionRequest } from './state.js';
+import { state, saveSettingsDebounced, saveChat, saveChatDebounced, charName, userName, currentPersona, chatMetadata, connectionRequest } from './state.js';
 import { streamCompletion, completion } from './api.js';
 import { eventSource, event_types } from './events.js';
 import { buildPrompt, samplerParams } from './prompt.js';
 import { substituteParams } from './macros.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
+import { splitReasoning, endsInsideThinking, stripReasoning, modelStartsInside, learnStartsInside } from './reasoning.js';
 import { formatMessage, hydrate } from './render.js';
 import { el, icon, toast, confirmDialog, modal, escapeHtml, isMobile } from './ui.js';
 import { points, plainMessage, onPointsChanged } from './rv-ext/points.js';
@@ -108,12 +109,14 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
 
     const depth = state.chat.length - 1 - id;
     const textEl = node.querySelector('.mes_text');
-    const result = formatMessage(mes.mes, { isUser: mes.is_user, depth, streaming, message: mes, id });
+    // Messages saved with inline <think> blocks (older chats, imports, extension edits): show the story only.
+    const inline = !streaming && !mes.is_user ? splitReasoning(mes.mes) : { reasoning: '', text: mes.mes };
+    const result = formatMessage(inline.text, { isUser: mes.is_user, depth, streaming, message: mes, id });
     textEl.innerHTML = result.html;
     hydrate(textEl, result, { streaming, message: mes, onPic: (prompt, force) => import('./imagegen.js').then(m => m.generateInlinePic(id, prompt, force)) });
     if (streaming && !mes.mes) textEl.innerHTML = '<span class="rv-dots"><span></span><span></span><span></span></span>';
 
-    const reasoning = mes.extra?.reasoning;
+    const reasoning = [mes.extra?.reasoning, inline.reasoning].filter(Boolean).join('\n\n');
     const det = node.querySelector('.mes_reasoning_details');
     det.classList.toggle('hidden', !reasoning);
     if (reasoning) {
@@ -122,7 +125,11 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
         rEl.innerHTML = r.html;
         const secs = mes.extra?.reasoning_duration ? ` for ${Math.round(mes.extra.reasoning_duration / 1000)}s` : '';
         det.querySelector('.reasoning-label').textContent = streaming && !mes.mes ? 'Thinking…' : `Thought${secs}`;
-        if (streaming && !mes.mes) det.open = true;
+        const collapsed = state.settings.render.reasoningCollapsed !== false;
+        if (streaming && !mes.mes) { det.open = true; det.dataset.autoOpened = '1'; } // watch it think
+        else if (!streaming && det.dataset.autoOpened) { det.open = !collapsed; delete det.dataset.autoOpened; }
+        else if (!det.dataset.init) det.open = !collapsed;
+        det.dataset.init = '1';
     }
 
     const media = node.querySelector('.mes_media');
@@ -652,7 +659,7 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
 
         if (type === 'quiet' && !quietToLoud) {
             const res = await completion(body, { signal: controller.signal });
-            return res.text;
+            return stripReasoning(res.text);
         }
         if (type === 'impersonate') {
             let text = prefill || '';
@@ -661,7 +668,7 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             if (stream) {
                 await streamCompletion(body, { signal: controller.signal, onText: t => { text += t; ta.value = text; autoGrow(); } });
             } else text += (await completion(body, { signal: controller.signal })).text;
-            ta.value = text.trim();
+            ta.value = splitReasoning(text, { startsInside: endsInsideThinking(prefill) }).text.trim();
             autoGrow();
             await eventSource.emit(event_types.IMPERSONATE_READY, ta.value);
             return ta.value;
@@ -703,12 +710,21 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         let result = null;
 
         let text = '';
-        let reasoning = '';
+        let reasoning = ''; // from the provider's reasoning channel
         let frame = 0;
+        // Inline <think> blocks: a prefill that opens one means the reply starts inside it.
+        const startsInside = type !== 'continue' && endsInsideThinking(prefill);
+        const streamsInside = startsInside || (type !== 'continue' && modelStartsInside(body.model));
+        const shownPrefill = prefill && state.settings.generation.showPrefill && !endsInsideThinking(prefill) && !splitReasoning(prefill).reasoning ? prefill : '';
         const paint = () => {
             frame = 0;
-            target.mes = type === 'continue' ? prefixText + text : (prefill && state.settings.generation.showPrefill ? prefill : '') + text;
-            if (reasoning) target.extra.reasoning = reasoning;
+            const split = splitReasoning(text, { streaming: true, startsInside: streamsInside });
+            // Regex that changes the saved message (e.g. hiding status blocks) also applies while streaming.
+            const shown = applyRegex(split.text, REGEX_PLACEMENT.AI_OUTPUT);
+            target.mes = type === 'continue' ? prefixText + shown : shownPrefill + shown;
+            const allReasoning = [reasoning, split.reasoning].filter(Boolean).join('\n\n');
+            if (allReasoning) target.extra.reasoning = allReasoning;
+            if (!reasoningEnd && allReasoning && split.text.trim()) reasoningEnd = Date.now();
             updateMessageBlock(targetId, target, { streaming: true });
             scrollToBottom();
         };
@@ -733,14 +749,18 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         }
         const endedAt = Date.now();
         if (frame) cancelAnimationFrame(frame);
+        const split = splitReasoning(text, { startsInside });
+        if (!startsInside && type !== 'continue' && learnStartsInside(body.model, text)) saveSettingsDebounced();
+        reasoning = [reasoning, split.reasoning].filter(Boolean).join('\n\n');
+        if (split.reasoning && reasoningEnd) firstTextAt = reasoningEnd; // inline thinking counts as think time
         if (reasoning) {
-            target.extra.reasoning = reasoning;
+            target.extra.reasoning = applyRegex(reasoning, REGEX_PLACEMENT.REASONING);
             target.extra.reasoning_duration = (reasoningEnd || Date.now()) - startedAt;
-        }
-        let final = text;
+        } else delete target.extra.reasoning;
+        let final = split.text;
         if (state.settings.generation.trimIncomplete) final = trimIncomplete(final);
         final = applyRegex(final, REGEX_PLACEMENT.AI_OUTPUT);
-        target.mes = type === 'continue' ? prefixText + final : final.trim();
+        target.mes = type === 'continue' ? prefixText + final : (shownPrefill + final).trim();
         if (!target.mes.trim() && type !== 'continue') target.mes = '';
         target.extra.api = state.settings.connection.provider;
         target.extra.model = state.settings.connection.model;

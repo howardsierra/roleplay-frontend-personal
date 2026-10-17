@@ -33,6 +33,7 @@ export async function renderHome() {
     if (!$id('home')) return;
     document.dispatchEvent(new Event('rv:home'));
     $id('home-greeting').textContent = state.characters.length ? greeting() : 'Reverie';
+    if (!state.character && $id('chat-title-sub')) $id('chat-title-sub').textContent = state.characters.length ? 'Your stories' : 'Pick a character to begin';
     $id('home-sub').textContent = state.characters.length
         ? 'Pick up a story where you left off, or start something new.'
         : 'Step into a story. Import a character card or create your own.';

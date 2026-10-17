@@ -101,10 +101,11 @@ function bindUi() {
         strip.scrollLeft += e.deltaY;
         e.preventDefault();
     }, { passive: false });
-    $id('btn-library').addEventListener('click', () => toggleDrawer('left-nav-panel'));
+    $id('btn-menu').addEventListener('click', () => toggleDrawer('left-nav-panel'));
+    $id('btn-library').addEventListener('click', () => { closeAllDrawers(); import('./browse.js').then(m => m.openCharacterBrowser()); });
     $id('btn-settings').addEventListener('click', () => openSettings());
     $id('btn-gallery').addEventListener('click', openGallery);
-    $id('chat-title').addEventListener('click', () => (state.character ? showChatList() : openDrawer('left-nav-panel')));
+    $id('chat-title').addEventListener('click', () => (state.character ? showChatList() : import('./browse.js').then(m => m.openStorySwitcher())));
     $id('scrim').addEventListener('click', closeAllDrawers);
     document.querySelectorAll('.drawer-close').forEach(b => b.addEventListener('click', closeAllDrawers));
     document.addEventListener('click', e => {
@@ -248,9 +249,17 @@ async function welcome() {
         onOpen: () => setTimeout(() => name.focus(), 80),
     });
     const s = state.settings;
-    const persona = { id: crypto.randomUUID(), name: name.value.trim() || 'User', description: '', avatar: '' };
-    s.personas = [persona, ...s.personas.filter(p => p.name !== 'User' || p.description)];
-    s.personaId = persona.id;
+    const typed = name.value.trim();
+    const real = s.personas.filter(p => p.description || p.avatar || p.stAvatar);
+    if (real.length && !typed) {
+        // Personas came with a restored backup or import: keep being one of them.
+        if (!real.some(p => p.id === s.personaId)) s.personaId = real[0].id;
+    } else {
+        // `welcome`: an empty first-run persona, replaced when real personas are imported.
+        const persona = { id: crypto.randomUUID(), name: typed || 'User', description: '', avatar: '', welcome: true };
+        s.personas = [persona, ...s.personas.filter(p => p.name !== 'User' || p.description)];
+        s.personaId = persona.id;
+    }
     s.onboarded = true;
     await saveSettings();
     if (go) openSettings('connection');

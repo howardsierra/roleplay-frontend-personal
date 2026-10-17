@@ -6,6 +6,7 @@
 // Agents are switched on per chat (with global defaults), can use their own model (one of your
 // connection profiles) and run every N messages.
 import { state, saveSettingsDebounced, chatMetadata, saveChatDebounced, charName, userName, currentPersona, connectionRequest } from '../state.js';
+import { stripReasoning } from '../reasoning.js';
 import { completion } from '../api.js';
 import { eventSource, event_types } from '../events.js';
 import { setExtensionPrompt, extension_prompt_types, extension_prompt_roles } from '../prompt.js';
@@ -69,7 +70,7 @@ export async function callAgent(messages, { maxTokens = 1200, temperature = 0.7,
     const conn = agentConnection();
     if (!conn.model) throw new Error('No model selected (Settings → Connection)');
     const res = await completion({ ...conn, messages, params: { temperature, max_tokens: maxTokens } }, { signal });
-    return String(res.text || '').trim();
+    return stripReasoning(String(res.text || '')).trim(); // reasoning models may think inline
 }
 
 /** Pulls a JSON object/array out of a model reply (tolerates code fences and chatter around it). */

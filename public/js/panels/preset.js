@@ -320,7 +320,9 @@ function blockRow(p, b, index, category, refresh) {
         el('button', { class: 'block-main', onclick: () => editBlock(p, b, refresh) },
             el('span', { class: 'block-name' }, b.name || MARKER_NAMES[b.marker] || 'Untitled'),
             el('span', { class: 'block-badges' }, badges, tokens ? el('span', { class: 'dim' }, tokens) : null)),
-        isCategory && !b.content ? el('span') : el('span', { class: 'switch small' }, sw, el('span', { class: 'switch-track' })));
+        // A <label>, so a click anywhere on the switch reaches the checkbox even if a theme restyles checkboxes.
+        isCategory && !b.content ? el('span') : el('label', { class: 'switch small', title: 'On / off' }, sw, el('span', { class: 'switch-track' })));
+    sw.addEventListener('change', () => row.classList.toggle('off', !sw.checked));
     return row;
 }
 

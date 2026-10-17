@@ -986,7 +986,7 @@ body.chat-style-document .mes + .mes { border-top: 1px solid color-mix(in srgb, 
    ===================================================================== */
 @media (min-width: 1180px) {
     #left-nav-panel { transform: none; visibility: visible; border-radius: 0; border-width: 0 1px 0 0; box-shadow: none; width: 300px; }
-    #left-nav-panel .drawer-close, #btn-library { display: none; }
+    #left-nav-panel .drawer-close, #btn-menu { display: none; }
     #app { margin-left: 300px; }
 }
 @media (min-width: 1400px) {
@@ -1106,7 +1106,7 @@ body.layout-classic .top-actions { display: contents; }
 body.layout-classic .chat-title { flex: 0 1 auto; padding: 2px 10px 2px 2px; margin: 0 8px; }
 body.layout-classic .chat-title img { width: calc(var(--rv-topbar) - 8px); height: calc(var(--rv-topbar) - 8px); box-shadow: none; }
 body.layout-classic #chat-title-sub { display: none; }
-body.layout-classic #btn-library { display: inline-grid !important; }
+body.layout-classic #btn-library, body.layout-classic #btn-menu { display: inline-grid !important; }
 
 body.layout-classic #sheld {
     position: fixed; top: var(--rv-topbar); bottom: 0; left: calc((100dvw - var(--sheldWidth)) / 2);
@@ -1663,3 +1663,60 @@ body.rv-prose-hold .mes.last_mes:not(.user_mes) .mes_block::after { content: 'âœ
 }
 .nav-item > span.nav-state:not(.nav-actions) { flex: 0 0 auto; font-size: .72em; padding: 2px 8px; border-radius: 99px; color: var(--rv-text-faint); border: 1px solid var(--SmartThemeBorderColor); }
 .nav-item.on > .nav-state { color: var(--SmartThemeBodyColor); background: color-mix(in srgb, var(--rv-accent) 22%, transparent); border-color: color-mix(in srgb, var(--rv-accent) 45%, transparent); }
+
+/* =====================================================================
+   Roomier on big screens: wider settings, dialogs and side panels
+   ===================================================================== */
+@media (min-width: 1180px) {
+    body:not(.layout-classic) #right-nav-panel.drawer { width: clamp(560px, 44vw, 800px); }
+    body.layout-classic #right-nav-panel.drawer { width: max(600px, calc((100dvw - var(--sheldWidth)) / 2)); }
+    #right-nav-panel .settings-body { padding: 6px 24px 48px; }
+    .modal { width: min(660px, 100%); }
+    .modal.wide { width: min(1120px, 100%); }
+    .modal-wrap { padding: 32px; }
+    .modal { max-height: min(90vh, calc(var(--vvh) - 48px)); }
+    .gsearch-modal .modal { width: min(860px, 100%); }
+}
+@media (min-width: 1600px) {
+    body:not(.layout-classic) #right-nav-panel.drawer { width: min(1000px, 52vw); }
+    /* Tabs made of many independent sections read better side by side. */
+    body:not(.layout-classic) #right-nav-panel .settings-body:is([data-tab="appearance"], [data-tab="advanced"], [data-tab="agents"], [data-tab="images"]) { column-count: 2; column-gap: 32px; }
+    body:not(.layout-classic) #right-nav-panel .settings-body:is([data-tab="appearance"], [data-tab="advanced"], [data-tab="agents"], [data-tab="images"]) > * { break-inside: avoid; }
+    body:not(.layout-classic) #left-nav-panel { width: 340px; }
+    #app { margin-left: 340px; }
+    body.sheet-docked:not(.layout-classic) #sheet-panel { width: 440px; }
+    body.sheet-docked #app { margin-right: 440px; }
+}
+
+/* Characters browser */
+.browser-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.browser-search { flex: 1 1 260px; }
+.browser-sort { flex: 0 0 auto; width: auto; }
+.browser-meta { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; }
+.browser-tags { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; }
+.browser-count { flex: 0 0 auto; margin: 6px 0 0; }
+.browser-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+@media (min-width: 1180px) { .browser-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); } }
+@media (max-width: 600px) { .browser-bar .btn span { display: none; } .browser-meta { flex-direction: column; } }
+
+/* Stories switcher */
+.story-switch-modal .modal { width: min(640px, 100%); }
+.story-switch-list { display: flex; flex-direction: column; gap: 8px; }
+.story-switch-row { all: unset; cursor: pointer; display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 16px; border: 1px solid var(--SmartThemeBorderColor); background: color-mix(in srgb, var(--rv-surface) 70%, transparent); transition: background .2s, border-color .2s; }
+.story-switch-row:hover, .story-switch-row:focus-visible { background: var(--rv-hover); border-color: color-mix(in srgb, var(--rv-accent) 40%, transparent); }
+.story-switch-row img { width: 46px; height: 46px; flex: 0 0 46px; border-radius: 50%; object-fit: cover; object-position: top; box-shadow: 0 0 0 2px var(--SmartThemeBorderColor); }
+.story-switch-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.story-switch-head { display: flex; justify-content: space-between; gap: 8px; }
+.story-switch-head span { font-size: .76em; color: var(--rv-text-faint); white-space: nowrap; }
+.story-switch-chat { font-size: .78em; color: var(--rv-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.story-switch-preview { font-family: var(--rv-chat-font); font-size: .86em; color: var(--rv-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* SillyTavern themes restyle every checkbox (size, position, appearance). Keep the invisible input of our
+   switches stretched over the switch so clicks always land on it. */
+.switch > input.switch-input[type="checkbox"] {
+    position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important;
+    margin: 0 !important; padding: 0 !important; opacity: 0 !important; z-index: 1 !important;
+    appearance: none !important; -webkit-appearance: none !important; display: block !important; transform: none !important;
+}
+.switch > .switch-track { pointer-events: none; }
+[data-rv-clear-drawer] { visibility: hidden !important; }

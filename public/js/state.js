@@ -150,8 +150,9 @@ export function connectionRequest(c = state.settings.connection) {
 }
 
 export function currentPersona() {
-    const { personas, personaId } = state.settings;
-    return personas.find(p => p.id === personaId) || personas[0] || { id: null, name: 'User', description: '', avatar: '' };
+    const { personas = [], personaId } = state.settings;
+    // Same lookup as personas.js: Reverie id, or the SillyTavern avatar key personas imported from ST keep.
+    return (personaId && personas.find(p => p.id === personaId || p.stAvatar === personaId)) || personas[0] || { id: null, name: 'User', description: '', avatar: '' };
 }
 
 export function charName() {

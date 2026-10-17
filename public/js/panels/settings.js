@@ -36,6 +36,7 @@ export async function showTab(id) {
         if (block.parentElement?.id !== 'st-dom') document.getElementById('st-dom').append(block);
     }
     current = tab.id;
+    body.dataset.tab = tab.id; // wide screens lay some tabs out in two columns
     document.querySelectorAll('#settings-tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab.id));
     // Scroll only the tab strip: scrollIntoView would also scroll the page while the drawer slides in.
     const strip = document.getElementById('settings-tabs');

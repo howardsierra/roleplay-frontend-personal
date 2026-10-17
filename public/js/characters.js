@@ -17,13 +17,13 @@ export async function loadCharacters() {
 }
 
 // ---------------- library ----------------
-function cardTile(c, { compact = false } = {}) {
+export function cardTile(c, { compact = false, onPick } = {}) {
     const tile = el('button', { class: `char-tile${compact ? ' compact' : ''}${state.character?.id === c.id ? ' active' : ''}`, 'data-id': c.id, title: c.name },
         el('div', { class: 'char-tile-img', style: { backgroundImage: `url("${avatarUrl(c)}")` } }),
         el('div', { class: 'char-tile-info' },
             el('div', { class: 'char-tile-name' }, c.fav ? icon('star', 'fav-star') : null, c.name),
             compact ? el('div', { class: 'char-tile-notes' }, c.notes || (c.tags || []).slice(0, 4).join(' · ')) : el('div', { class: 'char-tile-tags' }, (c.tags || []).slice(0, 3).map(t => el('span', { class: 'tag' }, t)))));
-    tile.addEventListener('click', () => showCharacterProfile(c.id));
+    tile.addEventListener('click', () => (onPick ? onPick(c) : showCharacterProfile(c.id)));
     tile.addEventListener('contextmenu', e => {
         e.preventDefault();
         editCharacter(c.id);
@@ -61,9 +61,24 @@ function greetingMessage() {
         mes: swipes[0],
         swipes,
         swipe_id: 0,
-        swipe_info: swipes.map(() => ({ send_date: nowDate(), extra: {} })),
-        extra: {},
+        swipe_info: swipes.map(() => ({ send_date: nowDate(), extra: { rv_greeting: true } })),
+        extra: { rv_greeting: true },
     };
+}
+
+/**
+ * The greeting has {{user}} filled in when the chat starts. If you switch persona before replying (or a
+ * persona lock switches it as the chat opens), write it again with the new name, unless you edited it.
+ */
+export function refreshGreeting() {
+    const first = state.chat[0];
+    if (!state.character || !first || first.is_user || !first.extra?.rv_greeting) return false;
+    if (state.chat.some(m => m.is_user) || first.extra?.rv_history?.length) return false;
+    const fresh = greetingMessage();
+    if (!fresh || fresh.swipes.length !== (first.swipes?.length || 1)) return false;
+    first.swipes = fresh.swipes;
+    first.mes = fresh.swipes[first.swipe_id ?? 0];
+    return true;
 }
 
 export async function openCharacter(id, { chatId, fresh = false } = {}) {
@@ -88,7 +103,7 @@ export function updateHeader() {
     const c = state.character;
     document.getElementById('chat-title-avatar').src = avatarUrl(c);
     document.getElementById('chat-title-name').textContent = c ? c.card.data.name : 'Reverie';
-    document.getElementById('chat-title-sub').textContent = c ? (state.chatId || '') : 'Pick a character to begin';
+    document.getElementById('chat-title-sub').textContent = c ? (state.chatId || '') : (state.characters.length ? 'Your stories' : 'Pick a character to begin');
     document.title = c ? `${c.card.data.name} · Reverie` : 'Reverie';
 }
 
