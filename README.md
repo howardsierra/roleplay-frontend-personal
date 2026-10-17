@@ -188,6 +188,12 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 
   It always asks first, and deleting the character you're chatting with takes you Home.
 - **Deleting the open chat** takes you Home, instead of opening another chat with the same character.
+- **Streaming:**
+  - Replies appear at a steady pace instead of in bursts (turn off *Smooth streaming* in Look). Long replies stay smooth because redraws space out on slower devices.
+  - A caret shows where the AI is typing, and the status shows the speed ("Writing… 42 t/s").
+  - Scroll up to reread and the reply stops pulling you down; a ↓ button (with a live dot) brings you back.
+  - If the connection drops, what arrived is kept and you're told to use Continue. Stopping before any text leaves no empty reply behind.
+- **Regenerate:** → (or ✨/⋯ → *Regenerate*) rerolls straight away. Long-press → (or *Regenerate with a note…*) offers *Just regenerate* or *Regenerate with note*.
 - **Keyboard shortcuts:** press `?` to see them.
 - **Desktop mode:** *Desktop mode* in the sidebar (or Settings → Look → *Screen mode*) lays Reverie out like on a computer on this device. You get the sidebar and character sheet side by side, and you can pinch to zoom. *Tablet* is a middle size. It's remembered per device.
 

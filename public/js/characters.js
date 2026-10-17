@@ -25,18 +25,22 @@ export function cardTile(c, { compact = false, onPick } = {}) {
             compact ? el('div', { class: 'char-tile-notes' }, c.notes || (c.tags || []).slice(0, 4).join(' · ')) : el('div', { class: 'char-tile-tags' }, (c.tags || []).slice(0, 3).map(t => el('span', { class: 'tag' }, t)))));
     let held = 0;
     let skipClick = false;
+    let touch = false;
     tile.addEventListener('click', e => {
         if (skipClick) { skipClick = false; e.preventDefault(); return; }
         onPick ? onPick(c) : showCharacterProfile(c.id);
     });
     tile.addEventListener('contextmenu', e => {
         e.preventDefault();
-        if (tile.closest('.selecting')) return;
+        // On touch the hold timer below opens the menu (Android also sends contextmenu: don't open it twice).
+        if (touch || tile.closest('.selecting')) return;
         characterMenu(tile, c);
     });
     // Touch: hold for the same menu.
     tile.addEventListener('pointerdown', e => {
-        if (e.pointerType !== 'touch' || tile.closest('.selecting')) return;
+        touch = e.pointerType === 'touch';
+        skipClick = false; // Android sends no click after a long press: don't swallow the next real tap
+        if (!touch || tile.closest('.selecting')) return;
         held = setTimeout(() => { skipClick = true; navigator.vibrate?.(15); characterMenu(tile, c); }, 550);
     });
     for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) tile.addEventListener(ev, () => clearTimeout(held));
@@ -93,10 +97,26 @@ export function refreshGreeting() {
     return true;
 }
 
+/**
+ * Leaving a chat while a reply is still being written: stop it first, so what arrived is saved to the chat
+ * it belongs to (not the one you're switching to).
+ */
+async function settleGeneration() {
+    if (!state.generating) return;
+    const { stopGeneration } = await import('./chat.js');
+    stopGeneration();
+    for (let i = 0; i < 80 && state.generating; i++) await new Promise(r => setTimeout(r, 50));
+    toast('Stopped the reply that was being written', 'info', { timeout: 2200 });
+}
+
 export async function openCharacter(id, { chatId, fresh = false } = {}) {
-    if (state.generating) return toast('Wait for the current reply to finish', 'warning');
+    await settleGeneration();
     await saveChat();
     const character = await api.get(`characters/${encodeURIComponent(id)}`);
+    // Forget the old chat before switching character, so nothing can save it into the new character's folder.
+    state.chatId = null;
+    state.chat = [];
+    state.chatMeta = {};
     state.character = character;
     document.body.classList.remove('no-character');
     closeAllDrawers();
@@ -120,6 +140,8 @@ export function updateHeader() {
 }
 
 export async function openChat(chatId) {
+    await settleGeneration();
+    await saveChat();
     const chat = await api.get(`chats/${encodeURIComponent(state.character.id)}/${encodeURIComponent(chatId)}`);
     state.chatId = chat.id;
     state.chatMeta = chat.meta || {};
@@ -143,6 +165,7 @@ async function rememberChat() {
 
 export async function newChat({ messages } = {}) {
     if (!state.character) return;
+    await settleGeneration();
     await saveChat();
     const greeting = greetingMessage();
     const chat = await api.post(`chats/${encodeURIComponent(state.character.id)}`, {
@@ -163,6 +186,7 @@ export async function newChat({ messages } = {}) {
 
 /** Leave the current chat and return to the home screen. */
 export async function closeChat() {
+    await settleGeneration();
     await saveChat();
     state.character = null;
     state.chatId = null;

@@ -146,7 +146,9 @@ function keyMatches(key, text, entry) {
     const caseSensitive = entry.caseSensitive ?? false;
     const whole = entry.matchWholeWords ?? false;
     const hay = caseSensitive ? text : text.toLowerCase();
-    const needle = substituteParams(caseSensitive ? k : k.toLowerCase());
+    // Fill in {{char}}/{{user}} first, then lowercase: names have capitals the lowercased text doesn't.
+    const filled = substituteParams(k);
+    const needle = caseSensitive ? filled : filled.toLowerCase();
     if (!whole) return hay.includes(needle);
     return new RegExp(`(?:^|\\W)${escapeRegex(needle)}(?:$|\\W)`, caseSensitive ? '' : 'i').test(hay);
 }

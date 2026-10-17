@@ -25,8 +25,13 @@ export async function getSecret(name) {
  * Key for a chat request. Saved custom endpoints each have their own key (custom_<id>);
  * the single "custom" key is the fallback, so keys saved before endpoints existed keep working.
  */
-async function chatKey(provider, endpointId) {
+async function chatKey(provider, endpointId, baseUrl) {
     if (provider === 'custom' && /^[a-z0-9]{1,32}$/i.test(String(endpointId || ''))) {
+        // A saved endpoint's key only goes to that endpoint's own server.
+        const settings = await readJson(path.join(DATA_DIR, 'settings.json'), {});
+        const saved = (settings.connection?.endpoints || []).find(e => e.id === endpointId);
+        const host = u => { try { return new URL(u).host; } catch { return ''; } };
+        if (saved?.baseUrl && baseUrl && host(saved.baseUrl) !== host(baseUrl)) return '';
         return (await getSecret(`custom_${endpointId}`)) || getSecret('custom');
     }
     return getSecret(provider);
@@ -62,7 +67,7 @@ router.put('/secrets', async (req, res) => {
 
 router.post('/models', async (req, res) => {
     const { provider, baseUrl, endpointId } = req.body || {};
-    res.json(await listModels({ provider, baseUrl, key: await chatKey(provider, endpointId) }));
+    res.json(await listModels({ provider, baseUrl, key: await chatKey(provider, endpointId, baseUrl) }));
 });
 
 // The exact bodies recently sent to providers (no headers, so never API keys), for the Prompt Inspector.
@@ -78,14 +83,22 @@ router.get('/requests/:id', (req, res) => {
     res.json(entry);
 });
 
+/** "fetch failed" says nothing: include the network cause (refused, timed out, DNS…). */
+function explain(err) {
+    const cause = err?.cause?.code || err?.cause?.message;
+    const msg = err?.message || String(err);
+    return cause && !msg.includes(cause) ? `${msg} (${cause})` : msg;
+}
+
 router.post('/generate', async (req, res) => {
     const { provider, baseUrl, endpointId, model, messages, params = {}, stream = true, requestId } = req.body || {};
     const onRequest = ({ url, body }) => rememberRequest(requestId, { provider, url, body });
     if (!model) return res.status(400).json({ error: 'Pick a model in the Connection panel first' });
     if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ error: 'Nothing to send' });
-    const key = await chatKey(provider, endpointId);
+    // Listen for the browser going away first, so a cancelled request never keeps running (and billing).
     const controller = new AbortController();
     res.on('close', () => { if (!res.writableFinished) controller.abort(); });
+    const key = await chatKey(provider, endpointId, baseUrl);
 
     if (!stream) {
         let text = '';
@@ -98,7 +111,7 @@ router.post('/generate', async (req, res) => {
             return res.json({ text, reasoning, ...result });
         } catch (err) {
             if (controller.signal.aborted) return;
-            return res.status(err.status || 502).json({ error: err.message });
+            return res.status(err.status || 502).json({ error: explain(err) });
         }
     }
 
@@ -118,7 +131,7 @@ router.post('/generate', async (req, res) => {
         });
         send({ done: true, ...result });
     } catch (err) {
-        if (!controller.signal.aborted) send({ error: err.message || String(err) });
+        if (!controller.signal.aborted) send({ error: explain(err) });
     } finally {
         clearInterval(ping);
         res.end();

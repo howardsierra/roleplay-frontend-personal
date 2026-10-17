@@ -1,7 +1,7 @@
 import express from 'express';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { DATA_DIR, DIRS, listJson, newId, readJson, removeFile, within, writeJson, writeAtomic } from '../lib/storage.js';
+import { DATA_DIR, DIRS, listJson, newId, readJson, removeFile, within, withLock, writeJson, writeAtomic } from '../lib/storage.js';
 import { isPng, readCardText, writeCardText } from '../lib/png.js';
 import { normalizeCard, placeholderPng, summarize, bannerData } from '../lib/card.js';
 
@@ -108,7 +108,7 @@ router.post('/', async (req, res) => {
     res.json(character);
 });
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', (req, res) => withLock(`character:${req.params.id}`, async () => {
     const c = await load(req.params.id);
     if (req.body.card) c.card = normalizeCard(req.body.card);
     // Partial updates merge into the saved card, so a writer that only changes a few fields (an editor, the
@@ -125,7 +125,7 @@ router.put('/:id', async (req, res) => {
     c.updated = Date.now();
     await writeJson(charFile(c.id), c);
     res.json(c);
-});
+}));
 
 router.delete('/:id', async (req, res) => {
     const c = await load(req.params.id);

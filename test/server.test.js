@@ -49,3 +49,17 @@ test('Search snippets centre on the match and cut at word boundaries', async () 
     assert.ok(s.endsWith('…'));
     assert.equal(searchSnippet('Short line.', 'short'), 'Short line.');
 });
+
+test('A named provider never sends its key to another host', async () => {
+    const { resolveBase } = await import('../server/lib/providers.js');
+    assert.equal(resolveBase('openai', 'https://evil.example/v1'), 'https://api.openai.com/v1');
+    assert.equal(resolveBase('openai', 'https://api.openai.com/v1/'), 'https://api.openai.com/v1');
+    assert.equal(resolveBase('custom', 'http://127.0.0.1:5001/v1'), 'http://127.0.0.1:5001/v1');
+});
+
+test('File names keep SillyTavern chat names and never escape their folder', async () => {
+    const { safeName } = await import('../server/lib/storage.js');
+    assert.equal(safeName('Elara - 2024-05-12@14h33m02s'), 'Elara - 2024-05-12@14h33m02s');
+    assert.equal(safeName('../../etc/passwd'), 'etcpasswd');
+    assert.throws(() => safeName('///'));
+});
