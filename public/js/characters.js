@@ -180,11 +180,13 @@ export async function deleteChat(charId, chatId) {
     if (isOpen) await saveChat();
     await api.del(`chats/${encodeURIComponent(charId)}/${encodeURIComponent(chatId)}`);
     if (localStorage.getItem(`rv-last-chat-${charId}`) === chatId) localStorage.removeItem(`rv-last-chat-${charId}`);
+    await eventSource.emit(event_types.CHAT_DELETED, chatId);
+    // Deleting the open chat goes back Home (rather than opening another chat with the same character).
     if (isOpen) {
         state.chatId = null;
-        await openCharacter(charId);
+        state.chat = [];
+        await closeChat();
     }
-    await eventSource.emit(event_types.CHAT_DELETED, chatId);
 }
 
 export async function showChatList() {
@@ -210,8 +212,10 @@ export async function showChatList() {
                     el('button', { class: 'icon-btn', title: 'Export…', onclick: e => { const b = e.currentTarget; import('./export.js').then(m => m.exportMenu(b, charId, c.id)); } }, icon('download')),
                     el('button', { class: 'icon-btn danger', title: 'Delete', onclick: async () => {
                         if (!await confirmDialog(`Delete chat "${c.id}"?`, { okLabel: 'Delete', danger: true })) return;
+                        const wasOpen = c.id === state.chatId && state.character?.id === charId;
                         await deleteChat(charId, c.id);
-                        render();
+                        if (wasOpen) close(); // back Home
+                        else render();
                     } }, icon('trash-can'))));
             return row;
         }));
@@ -311,7 +315,7 @@ async function maybeImportEmbeddedBook(character) {
     const world = normalizeWorld(book, book.name || `${character.card.data.name}'s Lore`);
     const saved = await api.post('worlds', world);
     character.card.data.extensions = { ...(character.card.data.extensions || {}), world: saved.name };
-    await api.put(`characters/${encodeURIComponent(character.id)}`, { card: character.card });
+    await api.put(`characters/${encodeURIComponent(character.id)}`, { extensions: { world: saved.name } });
     toast(`Linked lorebook “${saved.name}” (${Object.keys(saved.entries).length} entries)`, 'info');
 }
 
@@ -404,23 +408,55 @@ export async function editCharacter(id, { isNew = false } = {}) {
             loadCharacters();
         } }, icon('trash-can'), 'Delete'));
 
-    const result = await modal({
+    // Saves as you go (like SillyTavern): a moment after each change, and once more when the editor closes,
+    // however it's closed (Done, ✕, Esc or a tap outside), so nothing typed is lost.
+    const status = el('span', { class: 'hint editor-save-status' }, 'Changes save automatically');
+    let dirty = false;
+    let timer = 0;
+    let saving = Promise.resolve();
+    let deleted = false;
+    const save = () => {
+        clearTimeout(timer);
+        if (!dirty || deleted) return saving;
+        dirty = false;
+        status.textContent = 'Saving…';
+        saving = saving.then(async () => {
+            // Only the fields this editor owns: banners and extensions save their own parts of the card.
+            const { extensions, ...fields } = structuredClone(d);
+            const saved = await api.put(`characters/${encodeURIComponent(id)}`, { data: fields, extensions: { world: extensions?.world || '' } });
+            character.card = saved.card;
+            if (state.character?.id === id) {
+                state.character = { ...state.character, ...saved };
+                updateHeader();
+            }
+            status.textContent = 'Saved';
+            await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id } });
+        }).catch(err => {
+            dirty = true;
+            status.textContent = 'Not saved';
+            toast(`Couldn't save ${d.name}: ${err.message}`, 'error');
+        });
+        return saving;
+    };
+    const changed = () => { dirty = true; status.textContent = 'Editing…'; clearTimeout(timer); timer = setTimeout(save, 900); };
+    const content = el('div', { class: 'stack' }, tabBar, body, extras, status);
+    // Field handlers update the draft first; this hears the same events as they bubble up.
+    content.addEventListener('input', changed);
+    content.addEventListener('change', changed);
+    content.addEventListener('click', e => { if (e.target.closest('.greeting-row .icon-btn, .stack > .btn.small')) changed(); });
+    eventSource.once?.(event_types.CHARACTER_DELETED, ev => { if (ev?.id === id) deleted = true; });
+
+    await modal({
         title: isNew ? 'Create character' : `Edit ${d.name}`,
-        content: el('div', { class: 'stack' }, tabBar, body, extras),
+        content,
         wide: true,
-        buttons: [{ label: 'Cancel', value: false }, { label: 'Save', value: true, primary: true, icon: 'check' }],
+        buttons: [{ label: 'Done', value: true, primary: true, icon: 'check' }],
     });
-    if (!result) return;
-    character.card.data = d;
-    const saved = await api.put(`characters/${encodeURIComponent(id)}`, { card: character.card });
-    if (state.character?.id === id) {
-        state.character = { ...state.character, ...saved };
-        updateHeader();
-    }
-    await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id } });
-    toast('Saved', 'success', { timeout: 1500 });
+    const hadChanges = dirty;
+    await save();
+    if (hadChanges && !deleted && status.textContent === 'Saved') toast('Saved', 'success', { timeout: 1500 });
     await loadCharacters();
-    if (isNew) openCharacter(id);
+    if (isNew && !deleted) openCharacter(id);
 }
 
 export function exportChatFile() {

@@ -178,6 +178,9 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
   - Settings → More → *Thinking*.
 - **Regex:** scripts that change the saved message also apply while a reply streams, so hidden blocks don't flash by. "Alter chat display" plus "Alter outgoing prompt" together now applies in both places, as in SillyTavern.
 - **Personas:** `{{user}}`, the persona description and SillyTavern extensions all follow the persona you switch to (Persona Manager, the quick switcher, locks or Lumiverse extensions). A greeting you haven't replied to is rewritten with the new name. Importing SillyTavern personas replaces the empty persona from the welcome screen.
+- **Assistant:** like SillyTavern and Marinara Engine, Reverie adds a built-in **Assistant** the first time it runs. It's a helpful chat partner, not a roleplay character, for questions, brainstorming, drafting cards and lore, and settings help. Story agents stay off in its chats unless you switch them on. If you delete it, it stays deleted; *Add the Assistant* in the Characters browser brings it back.
+- **Character edits save as you type.** The editor (and the sheet editor) save whenever they close, whether with Done, ✕, Esc or a tap outside. Partial updates merge on the server, so a banner change or an extension writing to the card can't undo your edits.
+- **Deleting the open chat** takes you Home, instead of opening another chat with the same character.
 - **Keyboard shortcuts:** press `?` to see them.
 - **Desktop mode:** *Desktop mode* in the sidebar (or Settings → Look → *Screen mode*) lays Reverie out like on a computer on this device. You get the sidebar and character sheet side by side, and you can pinch to zoom. *Tablet* is a middle size. It's remembered per device.
 

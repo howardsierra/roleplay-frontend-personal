@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DATA_DIR, DIRS, ensureDirs } from './lib/storage.js';
 import { collectionRouter } from './routes/collection.js';
-import charactersRouter from './routes/characters.js';
+import charactersRouter, { seedAssistant } from './routes/characters.js';
 import chatsRouter from './routes/chats.js';
 import aiRouter from './routes/ai.js';
 import filesRouter from './routes/files.js';
@@ -176,6 +176,7 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, HOST, () => {
     startSpindle().catch(err => console.error('Lumiverse extensions failed to start', err));
+    seedAssistant().catch(err => console.error('Could not add the Assistant', err));
     // A snapshot of your data on the server once a day (the last few are kept; see Settings → More → Backup).
     setTimeout(() => dailySnapshot(), 60 * 1000).unref();
     setInterval(() => dailySnapshot(), 60 * 60 * 1000).unref();

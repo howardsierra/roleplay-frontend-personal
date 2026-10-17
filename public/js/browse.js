@@ -70,7 +70,15 @@ export async function openCharacterBrowser() {
                 el('label', { class: 'gsearch-box browser-search' }, icon('magnifying-glass'), search),
                 sortSel,
                 el('button', { class: 'btn', onclick: () => { close(); chars.importCharacter(); } }, icon('file-import'), el('span', {}, 'Import')),
-                el('button', { class: 'btn primary', onclick: () => { close(); chars.createCharacter(); } }, icon('plus'), el('span', {}, 'Create'))),
+                el('button', { class: 'btn primary', onclick: () => { close(); chars.createCharacter(); } }, icon('plus'), el('span', {}, 'Create')),
+                state.characters.some(c => c.assistant) ? null
+                    : el('button', { class: 'btn', title: 'Add Reverie’s built-in Assistant back', onclick: async () => {
+                        const { api } = await import('./api.js');
+                        await api.post('characters/assistant', {});
+                        await chars.loadCharacters();
+                        close();
+                        openCharacterBrowser();
+                    } }, icon('wand-magic-sparkles'), el('span', {}, 'Add the Assistant'))),
             el('div', { class: 'browser-meta' }, tagRow, count),
             grid),
         buttons: [],

@@ -19,7 +19,7 @@ export async function render(body) {
         ext.regex_scripts ??= [];
         scopes.push({
             key: 'character', label: `Character scripts · ${state.character.card.data.name}`, list: ext.regex_scripts,
-            save: () => api.put(`characters/${encodeURIComponent(state.character.id)}`, { card: state.character.card }),
+            save: () => api.put(`characters/${encodeURIComponent(state.character.id)}`, { extensions: { regex_scripts: ext.regex_scripts } }),
         });
     }
     body.append(section('', toggle('Allow character-scoped scripts', state.settings.allowCharacterRegex, v => { state.settings.allowCharacterRegex = v; saveSettingsDebounced(); printMessages(); }, 'Cards often ship regex that turns tags into styled HTML panels.')));
