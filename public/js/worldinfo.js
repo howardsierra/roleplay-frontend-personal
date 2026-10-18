@@ -268,7 +268,7 @@ function weightedPick(list) {
  *   outlets: Record<string,string>, depth: Array<{content, depth, role}>, activated: object[], total: number }}
  */
 export async function scanWorldInfo(chatMessages, { contextTokens = 64000, forced = [], dryRun = false } = {}) {
-    const empty = { before: '', after: '', anTop: '', anBottom: '', emTop: '', emBottom: '', outlets: {}, depth: [], activated: [], total: 0 };
+    const empty = { before: '', after: '', anTop: '', anBottom: '', emTop: '', emBottom: '', outlets: {}, depth: [], activated: [], skipped: [], total: 0 };
     const books = await activeBooks();
     const cfg = state.settings.worlds;
     const entries = [];
@@ -307,13 +307,14 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, force
     const scores = new Map();
     const sticky = new Set();
     let scanText = baseText;
+    const leftOut = new Map(); // id -> { e, reason }: matched but kept out
+    const rolledOut = new Set();
     for (let pass = 0; pass < (cfg.recursive ? 4 : 1); pass++) {
         let added = '';
         for (const e of entries) {
             const id = `${e.book}:${e.uid}`;
-            if (activated.has(id)) continue;
+            if (activated.has(id) || rolledOut.has(id)) continue;
             const t = timedState(id);
-            if (t === 'cooldown') continue;
             if (t === 'sticky') {
                 activated.set(id, e);
                 sticky.add(id);
@@ -321,7 +322,6 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, force
                 if (!e.preventRecursion) added += `\n${e.content}`;
                 continue;
             }
-            if (Number(e.delay) > 0 && turn < Number(e.delay)) continue;
             const isForced = forced.includes(e.uid);
             if (e.delayUntilRecursion && pass === 0 && !isForced && !e.constant) continue;
             let score = e.constant || isForced ? 1 : 0;
@@ -333,7 +333,15 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, force
                 score = entryScore(e, text, cfg);
             }
             if (!score) continue;
-            if (e.useProbability && Number(e.probability ?? 100) < 100 && Math.random() * 100 >= Number(e.probability)) continue;
+            // It matched; from here on, anything that keeps it out is worth telling you about.
+            if (t === 'cooldown') { leftOut.set(id, { e, reason: `cooling down (${timed[id].cooldownEnd - turn} more messages)` }); continue; }
+            if (Number(e.delay) > 0 && turn < Number(e.delay)) { leftOut.set(id, { e, reason: `waits until the chat has ${e.delay} messages` }); continue; }
+            if (e.useProbability && Number(e.probability ?? 100) < 100 && Math.random() * 100 >= Number(e.probability)) {
+                rolledOut.add(id); // one roll per reply, not one per recursion pass
+                leftOut.set(id, { e, reason: `lost its ${e.probability}% chance roll` });
+                continue;
+            }
+            leftOut.delete(id);
             activated.set(id, e);
             scores.set(id, score);
             if (!e.preventRecursion) added += `\n${e.content}`;
@@ -370,7 +378,13 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, force
                 winner = pool.find(id => activated.get(id) === picked);
             }
         }
-        for (const id of pool) if (id !== winner && !sticky.has(id)) activated.delete(id);
+        const winnerEntry = activated.get(winner);
+        for (const id of pool) {
+            if (id === winner || sticky.has(id)) continue;
+            const loser = activated.get(id);
+            leftOut.set(id, { e: loser, reason: `lost to “${winnerEntry.comment || (winnerEntry.key || [])[0] || `entry ${winnerEntry.uid}`}” in group “${String(loser.group).split(',')[0].trim()}”` });
+            activated.delete(id);
+        }
     }
 
     // Budget (rough token estimate), highest order first. Constant and "ignore budget" entries always fit.
@@ -380,7 +394,10 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, force
     let used = 0;
     for (const [id, e] of sorted) {
         const content = substituteParams(e.content);
-        if (used + content.length > budget && !e.constant && !e.ignoreBudget) continue;
+        if (used + content.length > budget && !e.constant && !e.ignoreBudget) {
+            leftOut.set(id, { e, reason: 'lorebook budget full' });
+            continue;
+        }
         used += content.length;
         kept.push({ ...e, content });
         // Start (or keep) the entry's sticky / cooldown clock.
@@ -411,6 +428,7 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, force
         outlets,
         depth,
         activated: kept,
+        skipped: [...leftOut.values()].map(({ e, reason }) => ({ ...e, reason })),
         total: entries.length,
     };
 }

@@ -3,6 +3,7 @@ import { state, saveSettingsDebounced, customEndpoint } from './state.js';
 import { api } from './api.js';
 import { buildPrompt, estimateTokens } from './prompt.js';
 import { el, icon, toast, modal } from './ui.js';
+import { leftOutView } from './left-out.js';
 
 // ---------------------------------------------------------------- captures
 // What was sent for the last few generations, newest last. Kept in memory only.
@@ -116,7 +117,7 @@ export async function showInspector({ mesKey, gen } = {}) {
         dry = true;
         cap = {
             at: Date.now(), messages: built.messages, labels: built.labels, breakdown: built.breakdown, tokens: built.tokens,
-            lore: built.lore, loreTotal: built.loreTotal, model: state.settings.connection.model, connection: connectionLabel(),
+            lore: built.lore, loreTotal: built.loreTotal, cut: built.cut, model: state.settings.connection.model, connection: connectionLabel(),
             body: null, type: 'dry run',
         };
     }
@@ -136,6 +137,8 @@ export async function showInspector({ mesKey, gen } = {}) {
         chip('Messages', String(cap.messages.length)),
         chip('Stack estimate', `~${tokens.toLocaleString()} tok`),
         chip('Lore', `${cap.lore?.length || 0}/${cap.loreTotal ?? cap.lore?.length ?? 0} active`),
+        cap.cut?.memories?.used?.length ? chip('Memories', String(cap.cut.memories.used.length)) : null,
+        cap.cut?.history ? chip('Trimmed', `${cap.cut.history.dropped} msgs`) : null,
         chip('Captured', dry ? 'dry run (next message)' : new Date(cap.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })),
         cap.type && !dry ? chip('Type', cap.type) : null,
     );
@@ -145,6 +148,7 @@ export async function showInspector({ mesKey, gen } = {}) {
     const tabs = [
         ['stack', 'Prompt Stack', 'layer-group'],
         ['lore', 'Lore Activation', 'book-open'],
+        ['cut', 'Left Out', 'scissors'],
         ['provider', 'Provider Request', 'paper-plane'],
         ['raw', 'Raw JSON', 'code'],
     ];
@@ -195,6 +199,14 @@ export async function showInspector({ mesKey, gen } = {}) {
             el('pre', {}, String(e.content)))));
     };
 
+    const renderCut = () => {
+        if (!cap.cut) return el('div', { class: 'insp-empty' }, icon('scissors'), 'This reply was sent before Reverie kept track of what was left out.');
+        const used = cap.cut.memories?.used || [];
+        return el('div', { class: 'insp-cut' },
+            used.length ? el('div', { class: 'insp-note' }, `Memories used: ${used.map(u => `${u.title} (${u.why})`).join(' · ')}`) : null,
+            leftOutView(cap.cut));
+    };
+
     const renderProvider = async () => {
         const box = el('div', { class: 'insp-provider' });
         if (dry) {
@@ -228,6 +240,7 @@ export async function showInspector({ mesKey, gen } = {}) {
         let content;
         if (id === 'stack') content = renderStack();
         else if (id === 'lore') content = renderLore();
+        else if (id === 'cut') content = renderCut();
         else if (id === 'provider') content = await renderProvider();
         else content = el('pre', { class: 'insp-json' }, JSON.stringify(rawData(), null, 2));
         if (current === id) pane.replaceChildren(content);

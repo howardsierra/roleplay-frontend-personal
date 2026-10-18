@@ -1746,3 +1746,24 @@ body.rv-prose-hold .mes.last_mes:not(.user_mes) .mes_block::after { content: 'âœ
 .jump-latest:hover { color: var(--rv-accent); }
 .jump-latest .jump-dot { position: absolute; top: 4px; right: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--rv-accent); opacity: 0; }
 .jump-latest.live .jump-dot { opacity: 1; animation: pulseDot 1.2s ease-in-out infinite; }
+
+/* ---------------------------------------------------------------- memory book + left out */
+.sheet-subhead { margin: 10px 0 0; font-size: .85em; font-weight: 600; color: var(--rv-text-dim); display: flex; align-items: center; gap: 6px; }
+.cut-list { gap: 6px; }
+.cut-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px; border-radius: 12px; background: var(--rv-surface); font-size: .86em; line-height: 1.4; }
+.cut-row > i { color: var(--rv-accent); margin-top: 3px; width: 14px; text-align: center; flex: none; }
+.insp-cut { display: flex; flex-direction: column; gap: 10px; padding: 4px; }
+.memory-entry { border-radius: 12px; background: var(--rv-surface); padding: 8px 12px; font-size: .9em; }
+.memory-entry.off { opacity: .55; }
+.memory-entry summary { cursor: pointer; display: flex; align-items: baseline; gap: 8px; list-style: none; }
+.memory-entry summary::-webkit-details-marker { display: none; }
+.memory-title { flex: 1; min-width: 0; font-weight: 600; }
+.memory-title i { color: var(--rv-accent); margin-right: 6px; font-size: .85em; }
+.memory-meta { flex: none; display: flex; gap: 6px; align-items: center; font-size: .78em; color: var(--rv-text-dim); }
+.memory-badge { padding: 1px 8px; border-radius: 999px; font-size: .95em; }
+.memory-badge.used { background: color-mix(in srgb, var(--rv-accent) 22%, transparent); color: var(--rv-text); }
+.memory-entry[open] { display: flex; flex-direction: column; gap: 8px; }
+.memory-text { white-space: pre-wrap; color: var(--rv-text-dim); line-height: 1.5; }
+.memory-keys, .insp-keys { display: flex; flex-wrap: wrap; gap: 4px; }
+.memory-keys .tag { font-size: .75em; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--rv-accent) 14%, transparent); }
+.memory-settings summary { cursor: pointer; font-size: .85em; color: var(--rv-text-dim); padding: 4px 0; }

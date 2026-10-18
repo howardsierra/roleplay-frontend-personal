@@ -714,7 +714,7 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         const body = { ...connectionBody(), messages, params: { ...samplerParams(), ...extraParams }, requestId };
         const capture = {
             type, requestId, messages, labels: built.labels, breakdown: built.breakdown, tokens: built.tokens, lore: built.lore,
-            loreTotal: built.loreTotal, model: body.model, connection: connectionLabel(), body: { ...body, requestId: undefined },
+            loreTotal: built.loreTotal, cut: built.cut, model: body.model, connection: connectionLabel(), body: { ...body, requestId: undefined },
         };
         if (type === 'quiet' || type === 'impersonate') recordCapture(capture);
 

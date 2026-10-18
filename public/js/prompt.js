@@ -8,6 +8,7 @@ import { points } from './rv-ext/points.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { stripReasoning } from './reasoning.js';
 import { scanWorldInfo } from './worldinfo.js';
+import { recallMemories, memoryReserve, noteMemoryUse } from './memory.js';
 import { eventSource, event_types } from './events.js';
 import { STRUCTURAL_MARKERS, MARKER_NAMES } from './presets.js';
 
@@ -15,8 +16,11 @@ export const extension_prompt_types = { NONE: -1, IN_PROMPT: 0, IN_CHAT: 1, BEFO
 export const extension_prompt_roles = { SYSTEM: 0, USER: 1, ASSISTANT: 2 };
 export const extensionPrompts = {};
 let lastLoreHits = [];
+let lastCutReport = null;
 /** Lorebook entries activated by the most recent real (non-preview) prompt build. */
 export const lastLore = () => lastLoreHits;
+/** What the most recent real prompt build left out, and why. */
+export const lastCut = () => (lastCutReport?.chatId === state.chatId ? lastCutReport : null);
 
 export function setExtensionPrompt(key, value, position = 0, depth = 4, scan = false, role = 0, filter = null) {
     extensionPrompts[key] = { value: String(value ?? ''), position: Number(position), depth: Number(depth), scan: !!scan, role: Number(role), filter };
@@ -321,7 +325,11 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     const reserve = (s.max_tokens || 1024) + 64;
     const fixedTokens = [...before, ...after].reduce((n, m) => n + estimateTokens(m.content), 0)
         + inChat.reduce((n, m) => n + estimateTokens(m.content), 0);
+    // Room for memories of what no longer fits (taken from the history's share).
     let budget = contextSize - reserve - fixedTokens;
+    const historyTokens = historyMsgs.reduce((n, m) => n + estimateTokens(m.content) + 4, 0);
+    const memReserve = historyTokens > budget ? Math.min(memoryReserve(), Math.max(0, Math.floor(budget / 3))) : 0;
+    budget -= memReserve;
     const kept = [];
     for (let i = historyMsgs.length - 1; i >= 0; i--) {
         const t = estimateTokens(historyMsgs[i].content) + 4;
@@ -330,6 +338,11 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
         kept.unshift(historyMsgs[i]);
     }
     const dropped = historyMsgs.length - kept.length;
+
+    // Memories of the story before the oldest message that fit.
+    const firstKept = kept.length ? kept[0].__src.index : Infinity;
+    const mem = recallMemories({ chat, firstKept: dropped ? firstKept : -1, budget: memReserve });
+    if (!dryRun) noteMemoryUse(mem);
 
     // Depth injections (depth 0 = after the newest message).
     const withInjections = [...kept];
@@ -341,6 +354,10 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     const historyBlock = [];
     const newChat = substituteParams(preset.behavior.newChatPrompt);
+    if (mem.text) {
+        historyBlock.push({ role: 'system', content: mem.text, __label: `Memories (${mem.used.length})` });
+        breakdown.push({ label: `Memories (${mem.used.length})`, role: 'system', tokens: mem.tokens });
+    }
     if (newChat.trim()) historyBlock.push({ role: 'system', content: newChat, __label: 'New chat prompt' });
     historyBlock.push(...withInjections.map(({ injected, ...m }) => m));
 
@@ -421,7 +438,16 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     const tokens = messages.reduce((n, m) => n + estimateTokens(m.content) + 4, 0);
     breakdown.push({ label: `Chat history (${kept.length} msgs${dropped ? `, ${dropped} trimmed` : ''})`, role: 'mixed', tokens: kept.reduce((n, m) => n + estimateTokens(m.content), 0) });
-    return { messages, labels: messages.length === labels.length ? labels : [], breakdown, tokens, prefill, lore: lore.activated, loreTotal: lore.total ?? lore.activated.length, extraParams };
+
+    // What didn't make it in, and why.
+    const cut = {
+        chatId: state.chatId,
+        history: dropped ? { dropped, total: historyMsgs.length, upTo: kept.length ? kept[0].__src.index : history.length } : null,
+        lore: (lore.skipped || []).map(e => ({ uid: e.uid, book: e.book, title: e.comment || (e.key || []).join(', ') || `Entry ${e.uid}`, reason: e.reason, tokens: estimateTokens(e.content) })),
+        memories: { used: mem.used, skipped: mem.skipped },
+    };
+    if (!dryRun) lastCutReport = cut;
+    return { messages, labels: messages.length === labels.length ? labels : [], breakdown, tokens, prefill, lore: lore.activated, loreTotal: lore.total ?? lore.activated.length, cut, extraParams };
 }
 
 export function samplerParams() {
