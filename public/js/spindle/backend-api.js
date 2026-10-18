@@ -367,12 +367,12 @@ const imageGenApi = {
 const worldApi = {
     async getActivated(_e, lvChatId) {
         if (!isActiveChat(lvChatId)) return [];
-        const res = await scanWorldInfo(state.chat.filter(m => !m.is_system)).catch(() => null);
+        const res = await scanWorldInfo(state.chat.filter(m => !m.is_system), { dryRun: true }).catch(() => null);
         return (res?.activated || []).map(e => ({ id: `${e.world || 'wi'}:${e.uid}`, comment: e.comment || '', keys: e.key || [], source: 'keyword', bookId: e.world || null, bookSource: 'global', content: e.content }));
     },
     entries: {
         async get(_e, id) {
-            const res = await scanWorldInfo(state.chat.filter(m => !m.is_system)).catch(() => null);
+            const res = await scanWorldInfo(state.chat.filter(m => !m.is_system), { dryRun: true }).catch(() => null);
             const e = (res?.activated || []).find(x => `${x.world || 'wi'}:${x.uid}` === id);
             return e ? { id, content: e.content, comment: e.comment || '', key: e.key || [], priority: e.order ?? 100 } : null;
         },
