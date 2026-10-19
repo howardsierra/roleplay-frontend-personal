@@ -54,15 +54,30 @@ export function newEntry(uid, partial = {}) {
     };
 }
 
-/** Accepts an ST world file, a V2 character_book, or a list of entries. */
+/**
+ * Accepts an ST world file, a V2 character_book, a list of entries, or a lorebook exported by NovelAI, Agnai,
+ * RisuAI, Lumiverse or Marinara Engine.
+ */
 export function normalizeWorld(json, fallbackName = 'Lorebook') {
+    const converted = convertForeignBook(json, fallbackName);
+    if (converted) return converted;
     if (json?.entries && !Array.isArray(json.entries)) {
         const entries = {};
-        for (const [k, e] of Object.entries(json.entries)) entries[k] = newEntry(Number(e.uid ?? k), e);
+        for (const [k, e] of Object.entries(json.entries)) {
+            // Marinara's "compatible" export flags regex keys with useRegex / regex.
+            const fixed = e && (e.useRegex === true || e.regex === true) ? { ...e, key: regexKeys(e.key, e.caseSensitive), keysecondary: regexKeys(e.keysecondary, e.caseSensitive) } : e;
+            entries[k] = newEntry(Number(e?.uid ?? k), fixed);
+        }
         return { name: json.name || fallbackName, entries };
     }
     const list = Array.isArray(json?.entries) ? json.entries : Array.isArray(json) ? json : [];
-    return { name: json?.name || fallbackName, entries: Object.fromEntries(list.map((e, i) => [i, fromBookEntry(e, i)])) };
+    const entries = {};
+    list.forEach((e, i) => {
+        const entry = fromBookEntry(e, i);
+        while (entries[entry.uid]) entry.uid = Math.max(list.length, ...Object.keys(entries).map(Number)) + 1; // duplicate ids
+        entries[entry.uid] = entry;
+    });
+    return { name: json?.name || fallbackName, entries };
 }
 
 // V2 character_book entry (ST keeps its extra fields in extensions; other tools sometimes use camelCase at the top).
@@ -79,20 +94,23 @@ function fromBookEntry(e, i) {
     const uid = Number.isFinite(Number(e.id)) ? Number(e.id) : i;
     return newEntry(uid, {
         ...(Object.keys(otherExt).length ? { extensions: otherExt } : {}),
-        key: e.keys || e.key || [],
-        keysecondary: e.secondary_keys || e.secondaryKeys || e.keysecondary || [],
+        // Marinara writes regex keys as plain patterns flagged useRegex / regex (snake use_regex only counts when the
+        // entry is clearly Marinara's: SillyTavern sets use_regex on every entry and uses /…/ for real regexes).
+        key: marinaraRegex(e) ? regexKeys(e.keys || e.key, pick(e.case_sensitive, e.caseSensitive)) : e.keys || e.key || [],
+        keysecondary: marinaraRegex(e) ? regexKeys(e.secondary_keys || e.secondaryKeys || e.keysecondary, pick(e.case_sensitive, e.caseSensitive)) : e.secondary_keys || e.secondaryKeys || e.keysecondary || [],
         comment: e.comment || e.name || '',
         content: e.content || '',
         constant: !!e.constant,
-        selective: e.selective ?? true,
-        selectiveLogic: pick(ext.selectiveLogic, e.selectiveLogic, 0),
+        selective: !!e.selective, // SillyTavern's convertCharacterBook: `selective || false`
+        selectiveLogic: toLogic(pick(ext.selectiveLogic, e.selectiveLogic, ext.selective_logic, e.selective_logic, 0)),
         order: pick(e.insertion_order, e.insertionOrder, e.order, 100),
-        position: pick(ext.position, typeof e.position === 'number' ? e.position : undefined, posMap[e.position], 0),
+        // No position at all reads as "after" in SillyTavern (anything but 'before_char').
+        position: pick(ext.position, typeof e.position === 'number' ? e.position : undefined, posMap[e.position], 1),
         disable: e.enabled === false || !!e.disable,
         depth: pick(ext.depth, e.depth, 4),
-        role: pick(ext.role, e.role, 0),
+        role: toRole(pick(ext.role, e.role, 0)),
         probability: pick(ext.probability, e.probability, 100),
-        useProbability: pick(ext.useProbability, e.useProbability, true),
+        useProbability: pick(ext.useProbability, e.useProbability, ext.use_probability, true),
         caseSensitive: pick(e.case_sensitive, ext.case_sensitive, e.caseSensitive, null),
         matchWholeWords: pick(ext.match_whole_words, e.matchWholeWords, null),
         excludeRecursion: !!pick(ext.exclude_recursion, e.excludeRecursion),
@@ -156,6 +174,108 @@ export function toCharacterBook(world) {
             },
         })),
     };
+}
+
+// ---------------------------------------------------------------- lorebooks from other apps
+
+const LOGIC_NAMES = { and: 0, and_any: 0, or: 0, not_all: 1, not: 2, not_any: 2, and_all: 3 };
+/** selectiveLogic as a number: Marinara uses names ('and', 'not_all'…), some files a numeric string. */
+function toLogic(v) {
+    if (typeof v === 'string') return LOGIC_NAMES[v.trim().toLowerCase()] ?? (Number.isFinite(Number(v)) && v.trim() !== '' ? Number(v) : 0);
+    return Number.isFinite(Number(v)) ? Number(v) : 0;
+}
+const toRole = v => (typeof v === 'string' ? ({ system: 0, user: 1, assistant: 2 }[v.toLowerCase()] ?? (Number(v) || 0)) : Number(v) || 0);
+const marinaraRegex = e => e.useRegex === true || e.regex === true || (e.use_regex === true && typeof e.selectiveLogic === 'string');
+/** Plain regex patterns → SillyTavern's /pattern/flags keys (patterns already written as /…/ stay as they are). */
+function regexKeys(keys, caseSensitive) {
+    const list = Array.isArray(keys) ? keys : typeof keys === 'string' ? keys.split(',') : [];
+    return list.map(k => String(k).trim()).filter(Boolean).map(k => (/^\/.+\/[gimsuy]*$/.test(k) ? k : `/${k}/${caseSensitive ? '' : 'i'}`));
+}
+const splitKeys = v => (Array.isArray(v) ? v.map(String) : String(v ?? '').split(',').map(x => x.trim()).filter(Boolean));
+const book = (name, list) => ({ name, entries: Object.fromEntries(list.map((e, i) => [i, newEntry(i, { displayIndex: i, ...e })])) });
+
+/** NovelAI / Agnai / RisuAI / Lumiverse / Marinara lorebooks → a Reverie world (null if it's none of those). */
+export function convertForeignBook(json, fallbackName = 'Lorebook') {
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
+    if (json.lorebookVersion !== undefined && Array.isArray(json.entries)) return fromNovelAI(json, fallbackName);
+    if (json.kind === 'memory' && Array.isArray(json.entries)) return fromAgnai(json, fallbackName);
+    if (json.type === 'risu' && Array.isArray(json.data)) return fromRisu(json, fallbackName);
+    if (json.type === 'lumiverse_world_book' && Array.isArray(json.entries)) return fromLumiverse(json, fallbackName);
+    if (json.type === 'marinara_lorebook' && json.data && typeof json.data === 'object') return fromMarinara(json.data, fallbackName);
+    return null;
+}
+
+// SillyTavern's convertNovelLorebook.
+function fromNovelAI(json, fallbackName) {
+    return book(json.name || fallbackName, json.entries.map(e => ({
+        key: splitKeys(e.keys), comment: e.displayName || '', content: e.text || '',
+        constant: false, selective: false, order: e.contextConfig?.budgetPriority ?? 0, position: 0, disable: !e.enabled,
+    })));
+}
+
+// SillyTavern's convertAgnaiMemoryBook.
+function fromAgnai(json, fallbackName) {
+    return book(json.name || fallbackName, json.entries.map(e => ({
+        key: splitKeys(e.keywords), comment: e.name || '', content: e.entry || '',
+        constant: false, selective: false, order: e.weight ?? 100, position: 0, disable: !e.enabled,
+    })));
+}
+
+// SillyTavern's convertRisuLorebook.
+function fromRisu(json, fallbackName) {
+    return book(json.name || fallbackName, json.data.map(e => ({
+        key: splitKeys(e.key), keysecondary: e.secondkey ? splitKeys(e.secondkey) : [], comment: e.comment || '', content: e.content || '',
+        constant: !!e.alwaysActive, selective: !!e.selective, order: e.insertorder ?? 100, position: 0, disable: false,
+        probability: e.activationPercent ?? 100, useProbability: true,
+    })));
+}
+
+// Lumiverse's native world book export: snake_case fields, positions 0-6 like SillyTavern, 7 = at a
+// {{wi_marker}} (no Reverie equivalent: placed before the character), 8 = outlet-only.
+function fromLumiverse(json, fallbackName) {
+    const pos = p => (Number(p) === 8 ? 7 : Number(p) === 7 ? 0 : Number.isFinite(Number(p)) ? Number(p) : 0);
+    return book(json.name || fallbackName, json.entries.map(e => {
+        const ext = e.extensions || {};
+        const keys = v => (e.use_regex ? regexKeys(v, e.case_sensitive) : splitKeys(v));
+        return {
+            key: keys(e.key ?? e.keys), keysecondary: keys(e.keysecondary ?? e.secondary_keys ?? []),
+            comment: e.comment || '', content: e.content || '',
+            constant: !!e.constant, selective: !!e.selective, selectiveLogic: toLogic(e.selective_logic ?? 0),
+            order: e.order_value ?? 100, position: pos(e.position), depth: e.depth ?? 4, role: toRole(e.role ?? 0),
+            disable: !!e.disabled, probability: e.probability ?? 100, useProbability: e.use_probability ?? true,
+            group: e.group_name || '', groupOverride: !!e.group_override, groupWeight: e.group_weight ?? 100,
+            excludeRecursion: !!e.exclude_recursion, preventRecursion: !!e.prevent_recursion,
+            delayUntilRecursion: e.delay_until_recursion ?? false, matchWholeWords: e.match_whole_words ?? null,
+            caseSensitive: e.case_sensitive ?? null, scanDepth: e.scan_depth ?? null,
+            sticky: e.sticky ?? 0, cooldown: e.cooldown ?? 0, delay: e.delay ?? 0,
+            outletName: e.outlet_name || '', automationId: e.automation_id || '', vectorized: !!e.vectorized,
+            ...(ext.characterFilter ? { characterFilter: ext.characterFilter } : {}),
+            ...(Array.isArray(ext.triggers) ? { triggers: ext.triggers } : {}),
+        };
+    }));
+}
+
+// Marinara Engine's native lorebook export: { lorebook, entries, folders }. Positions 0/1/2/7 (2 = at depth),
+// role and selectiveLogic as names, regex keys as plain patterns, entries in disabled folders are off.
+function fromMarinara(data, fallbackName) {
+    const offFolders = new Set((data.folders || []).filter(f => f && f.enabled === false).map(f => f.id));
+    const pos = p => ({ 0: 0, 1: 1, 2: 4, 7: 7 }[Number(p)] ?? 0);
+    const entries = (Array.isArray(data.entries) ? data.entries : []).slice().sort((a, b) => (a.order ?? 100) - (b.order ?? 100));
+    return book(data.lorebook?.name || fallbackName, entries.map(e => {
+        const keys = v => (e.useRegex ? regexKeys(v, e.caseSensitive) : splitKeys(v ?? []));
+        return {
+            key: keys(e.keys), keysecondary: keys(e.secondaryKeys), comment: e.name || '', content: e.content || '',
+            constant: !!e.constant, selective: !!e.selective, selectiveLogic: toLogic(e.selectiveLogic),
+            order: e.order ?? 100, position: pos(e.position), depth: e.depth ?? 4, role: toRole(e.role ?? 0),
+            disable: e.enabled === false || offFolders.has(e.folderId),
+            probability: e.probability ?? 100, useProbability: e.probability != null,
+            scanDepth: e.scanDepth ?? null, matchWholeWords: e.matchWholeWords ?? null, caseSensitive: e.caseSensitive ?? null,
+            sticky: e.sticky ?? 0, cooldown: e.cooldown ?? 0, delay: e.delay ?? 0,
+            group: e.group || '', groupWeight: e.groupWeight ?? 100, outletName: e.outletName || '',
+            excludeRecursion: !!e.excludeRecursion, preventRecursion: !!e.preventRecursion, delayUntilRecursion: !!e.delayUntilRecursion,
+            vectorized: e.excludeFromVectorization === false,
+        };
+    }));
 }
 
 const withoutUndefined = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v !== undefined));

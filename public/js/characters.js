@@ -147,6 +147,8 @@ export async function openChat(chatId) {
     state.chatMeta = chat.meta || {};
     state.chatMeta.chat_metadata ??= {};
     state.chat = chat.messages || [];
+    // Lines the server couldn't read are dropped on the next save; say so.
+    if (chat.skipped) toast(`${chat.skipped} damaged line${chat.skipped === 1 ? '' : 's'} in this chat couldn't be read and will be left out when it's saved`, 'warning', { timeout: 8000 });
     printMessages();
     updateHeader();
     rememberChat();
@@ -261,10 +263,19 @@ export async function showChatList() {
     const head = el('div', { class: 'row gap wrap' },
         el('button', { class: 'btn primary', onclick: async () => { await newChat(); close(); } }, icon('plus'), 'New chat'),
         el('button', { class: 'btn', onclick: async () => {
-            const file = await pickFile('.jsonl,application/jsonl,application/json');
+            const file = await pickFile('.jsonl,.json,application/jsonl,application/json');
             if (!file) return;
-            const res = await api.upload(`chats/${encodeURIComponent(charId)}/import`, await file.text());
-            toast('Chat imported', 'success');
+            const q = new URLSearchParams({ character_name: state.character?.card?.data?.name || '', user_name: userName(), filename: file.name });
+            let res;
+            try {
+                res = await api.upload(`chats/${encodeURIComponent(charId)}/import?${q}`, await file.text());
+            } catch (err) {
+                toast(`${file.name}: ${err.message}`, 'error');
+                return;
+            }
+            const many = (res.ids?.length || 1) > 1 ? `${res.ids.length} chats imported` : 'Chat imported';
+            if (res.warning) toast(`${many}, but ${res.warning}.`, 'warning', { timeout: 6000 });
+            else toast(many, 'success');
             await openChat(res.id);
             close();
         } }, icon('file-import'), 'Import .jsonl'),
@@ -279,20 +290,24 @@ export async function showChatList() {
 
 // ---------------- import / create / edit ----------------
 export async function importCharacter() {
-    const files = await pickFile('.png,.json,image/png,application/json', { multiple: true });
+    const files = await pickFile('.png,.json,.charx,image/png,application/json,application/zip', { multiple: true });
     if (!files?.length) return;
     let last = null;
+    const imported = [];
     for (const file of files) {
         try {
             last = await api.upload('characters/import', file);
+            if (last.avatarIsPng === false) await convertAvatarToPng(last).catch(() => {});
+            imported.push(last);
             toast(`Imported ${last.card.data.name}`, 'success');
         } catch (err) {
             toast(`${file.name}: ${err.message}`, 'error');
         }
     }
+    // Every imported card's embedded lorebook (and any extra books a CharX carries) becomes a linked lorebook.
+    for (const character of imported) await maybeImportEmbeddedBook(character).catch(err => toast(`${character.card.data.name}: ${err.message}`, 'error'));
     await loadCharacters();
     if (last) {
-        await maybeImportEmbeddedBook(last);
         // Stay where you are; just point out the new card.
         const tile = document.querySelector(`#home-grid .char-tile[data-id="${CSS.escape(last.id)}"], #rm_print_characters_block .char-tile[data-id="${CSS.escape(last.id)}"]`);
         tile?.classList.add('just-added');
@@ -347,7 +362,7 @@ export function characterMenu(anchor, c) {
         ['pen', 'Edit', () => editCharacter(c.id)],
         ['star', c.fav ? 'Remove from favourites' : 'Add to favourites', async () => { await api.put(`characters/${encodeURIComponent(c.id)}`, { fav: !c.fav }); loadCharacters(); }],
         ['clone', 'Duplicate', async () => { const copy = await api.post(`characters/${encodeURIComponent(c.id)}/duplicate`); toast(`Duplicated as ${copy.card.data.name}`, 'success'); loadCharacters(); }],
-        ['image', 'Export PNG', () => { location.href = `api/characters/${encodeURIComponent(c.id)}/export.png`; }],
+        ['image', 'Export PNG', () => exportCharacterCard(c.id, 'png')],
         ['trash-can', 'Delete…', () => deleteCharacters([c.id]), 'danger'],
     ]));
 }
@@ -381,7 +396,7 @@ export async function showCharacterProfile(id) {
                     const summary = state.characters.find(x => x.id === id) || { id, name: d.name };
                     import('./chat.js').then(({ popMenu }) => popMenu(anchor, [
                         ['clone', 'Duplicate', async () => { close(); const copy = await api.post(`characters/${encodeURIComponent(id)}/duplicate`); toast(`Duplicated as ${copy.card.data.name}`, 'success'); loadCharacters(); }],
-                        ['image', 'Export PNG', () => { location.href = `api/characters/${encodeURIComponent(id)}/export.png`; }],
+                        ['image', 'Export PNG', () => exportCharacterCard(id, 'png')],
                         ['file-code', 'Export JSON', () => { location.href = `api/characters/${encodeURIComponent(id)}/export.json`; }],
                         ['trash-can', `Delete ${summary.name}…`, async () => { if (await deleteCharacters([id])) close(); }, 'danger'],
                     ]));
@@ -395,15 +410,70 @@ export async function showCharacterProfile(id) {
     modal({ title: '', content, buttons: [], wide: true, className: 'char-profile-wrap', onOpen: (_body, done) => { close = () => done(null); } });
 }
 
+/** Re-encodes a non-PNG avatar (JPEG / WebP from a CharX or Marinara import) as PNG, so PNG export keeps it. */
+async function convertAvatarToPng(character) {
+    const blob = await fetch(avatarUrl(character)).then(r => (r.ok ? r.blob() : Promise.reject(new Error('Avatar not found'))));
+    const png = await toPngBlob(blob, 2048);
+    const updated = await api.upload(`characters/${encodeURIComponent(character.id)}/avatar`, png);
+    character.avatar = updated.avatar;
+    return updated;
+}
+
+/**
+ * Downloads a character as a PNG or JSON card. Older characters may still have a JPEG/WebP avatar, which the
+ * server can't re-encode: it's converted to PNG here first so the card carries the real picture.
+ */
+export async function exportCharacterCard(id, fmt = 'png') {
+    if (fmt === 'png') {
+        const c = state.characters.find(x => x.id === id) || await api.get(`characters/${encodeURIComponent(id)}`).catch(() => null);
+        if (c?.avatar && !/\.png$/i.test(c.avatar)) {
+            try {
+                await convertAvatarToPng(c);
+                await loadCharacters();
+            } catch { /* export with the placeholder image */ }
+        }
+    }
+    location.href = `api/characters/${encodeURIComponent(id)}/export.${fmt}`;
+}
+
+/** Same name and same number of entries: treat an existing lorebook as this one instead of duplicating it. */
+async function saveOrReuseBook(world) {
+    const count = Object.keys(world.entries || {}).length;
+    const list = await api.get('worlds').catch(() => []);
+    const same = list.find(w => w.name === world.name && w.count === count);
+    if (same) return { saved: same, reused: true };
+    // Another book already has this name: pick a free one so the link points at the right book.
+    const names = new Set(list.map(w => w.name));
+    let name = world.name;
+    for (let i = 2; names.has(name); i++) name = `${world.name} (${i})`;
+    return { saved: await api.post('worlds', { ...world, name }), reused: false };
+}
+
 async function maybeImportEmbeddedBook(character) {
+    const extra = (character.books || []).filter(b => b && typeof b === 'object');
     const book = character.card.data.character_book;
-    if (!book?.entries?.length) return;
-    // Keep the embedded book; also make it editable as a standalone lorebook linked to the character.
-    const world = normalizeWorld(book, book.name || `${character.card.data.name}'s Lore`);
-    const saved = await api.post('worlds', world);
-    character.card.data.extensions = { ...(character.card.data.extensions || {}), world: saved.name };
-    await api.put(`characters/${encodeURIComponent(character.id)}`, { extensions: { world: saved.name } });
-    toast(`Linked lorebook “${saved.name}” (${Object.keys(saved.entries).length} entries)`, 'info');
+    const link = { world: character.card.data.extensions?.world || '', extra_worlds: [...(character.card.data.extensions?.extra_worlds || [])] };
+    const notes = [];
+    if (book?.entries?.length) {
+        // Keep the embedded book; also make it editable as a standalone lorebook linked to the character.
+        const world = normalizeWorld(book, book.name || `${character.card.data.name}'s Lore`);
+        const { saved, reused } = await saveOrReuseBook(world);
+        link.world = saved.name;
+        notes.push(`${reused ? 'Linked existing' : 'Linked'} lorebook “${saved.name}” (${saved.count ?? Object.keys(saved.entries || {}).length} entries)`);
+    }
+    for (const raw of extra) {
+        const world = normalizeWorld(raw.type ? raw : { type: 'lumiverse_world_book', ...raw }, raw.name || `${character.card.data.name}'s Lore`);
+        if (!Object.keys(world.entries).length) continue;
+        const { saved } = await saveOrReuseBook(world);
+        if (!link.world) link.world = saved.name;
+        else if (link.world !== saved.name && !link.extra_worlds.includes(saved.name)) link.extra_worlds.push(saved.name);
+        notes.push(`lorebook “${saved.name}”`);
+    }
+    if (!notes.length) return;
+    const ext = { world: link.world, ...(link.extra_worlds.length ? { extra_worlds: link.extra_worlds } : {}) };
+    character.card.data.extensions = { ...(character.card.data.extensions || {}), ...ext };
+    await api.put(`characters/${encodeURIComponent(character.id)}`, { extensions: ext });
+    toast(notes.join(' · '), 'info');
 }
 
 export async function createCharacter() {
@@ -488,8 +558,8 @@ export async function editCharacter(id, { isNew = false } = {}) {
             await api.put(`characters/${encodeURIComponent(id)}`, { fav: character.fav });
             loadCharacters();
         } }, icon('star'), 'Favourite'),
-        el('a', { class: 'btn small', href: `api/characters/${encodeURIComponent(id)}/export.png` }, icon('image'), 'Export PNG'),
-        el('a', { class: 'btn small', href: `api/characters/${encodeURIComponent(id)}/export.json` }, icon('file-code'), 'Export JSON'),
+        el('button', { class: 'btn small', onclick: () => exportCharacterCard(id, 'png') }, icon('image'), 'Export PNG'),
+        el('button', { class: 'btn small', onclick: () => exportCharacterCard(id, 'json') }, icon('file-code'), 'Export JSON'),
         el('button', { class: 'btn small', onclick: async () => {
             const copy = await api.post(`characters/${encodeURIComponent(id)}/duplicate`);
             toast(`Duplicated as ${copy.card.data.name}`, 'success');

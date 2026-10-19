@@ -5,6 +5,7 @@ import express from 'express';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { DIRS, listJson, safeName, within, writeAtomic, removeFile } from '../lib/storage.js';
+import { convertChatImport, parseJsonlLines } from '../lib/importers.js';
 
 const router = express.Router();
 const text = express.text({ type: () => true, limit: '64mb' });
@@ -17,16 +18,9 @@ const listedFile = (charId, name) => path.join(dirFor(charId), path.basename(nam
 // New and renamed chats keep names comfortably short.
 const chatName = s => safeName(String(s).slice(0, 100));
 
+/** SillyTavern JSONL → { meta, messages, skipped }. Lines that aren't valid JSON are skipped (and counted). */
 export function parseJsonl(src) {
-    const lines = String(src).split(/\r?\n/).filter(l => l.trim());
-    if (!lines.length) return { meta: {}, messages: [] };
-    const parsed = lines.map(l => JSON.parse(l));
-    const first = parsed[0];
-    const isHeader = first && !('mes' in first) && ('chat_metadata' in first || 'user_name' in first || 'create_date' in first);
-    return {
-        meta: isHeader ? first : {},
-        messages: isHeader ? parsed.slice(1) : parsed,
-    };
+    return parseJsonlLines(src);
 }
 
 function toJsonl({ meta, messages }) {
@@ -158,10 +152,16 @@ router.get('/:charId/:chatId', async (req, res) => {
     }
 });
 
-router.post('/:charId', async (req, res) => {
-    const base = chatName(req.body?.name || `${req.body?.characterName || 'Chat'} - ${stamp()}`);
+/** A free chat name for this character: `base`, else `base (2)`, `base (3)`… */
+async function freeChatId(charId, name) {
+    const base = chatName(name);
     let id = base;
-    for (let i = 2; await fsp.access(fileFor(req.params.charId, id)).then(() => true, () => false); i++) id = `${base} (${i})`;
+    for (let i = 2; await fsp.access(fileFor(charId, id)).then(() => true, () => false); i++) id = `${base} (${i})`;
+    return id;
+}
+
+router.post('/:charId', async (req, res) => {
+    const id = await freeChatId(req.params.charId, req.body?.name || `${req.body?.characterName || 'Chat'} - ${stamp()}`);
     const chat = {
         meta: { user_name: req.body?.userName || 'User', character_name: req.body?.characterName || '', create_date: stamp(), chat_metadata: {} },
         messages: req.body?.messages || [],
@@ -188,17 +188,41 @@ router.delete('/:charId/:chatId', async (req, res) => {
     res.json({ ok: true });
 });
 
+// Import a chat file. Query: ?character_name=&user_name=&filename= (the client knows these; old headers often say "unused").
+// Accepts SillyTavern / Chub / Marinara JSONL and the .json chat formats SillyTavern imports (oobabooga, Agnai,
+// CAI Tools, Kobold Lite, RisuAI). Unreadable JSONL lines are skipped and reported as `skipped`.
 router.post('/:charId/import', text, async (req, res) => {
-    const chat = parseJsonl(req.body);
-    const id = chatName(`${chat.meta.character_name || 'Imported'} - ${stamp()}`);
-    await writeAtomic(fileFor(req.params.charId, id), toJsonl(chat));
-    res.json({ id });
+    const characterName = String(req.query.character_name || '').trim() || 'Character';
+    const userName = String(req.query.user_name || '').trim() || 'User';
+    const filename = String(req.query.filename || '').replace(/\.(jsonl|json|txt)$/i, '').trim();
+    const { chats, skipped, format } = convertChatImport(req.body, { userName, characterName });
+    const ids = [];
+    for (const chat of chats) {
+        for (const k of ['user_name', 'character_name']) {
+            if (!chat.meta[k] || chat.meta[k] === 'unused') chat.meta[k] = k === 'user_name' ? userName : characterName;
+        }
+        const base = chats.length === 1 && filename ? filename : `${characterName} - ${stamp()} imported`;
+        let id;
+        try { id = await freeChatId(req.params.charId, base); } catch { id = await freeChatId(req.params.charId, `${characterName} - ${stamp()} imported`); }
+        await writeAtomic(fileFor(req.params.charId, id), toJsonl(chat));
+        ids.push(id);
+    }
+    const warning = skipped ? `${skipped} line${skipped === 1 ? '' : 's'} couldn't be read and ${skipped === 1 ? 'was' : 'were'} skipped` : undefined;
+    res.json({ id: ids[0], ids, skipped, format, ...(warning ? { warning } : {}) });
 });
 
 router.get('/:charId/:chatId/export', async (req, res) => {
     const file = fileFor(req.params.charId, req.params.chatId);
+    const { meta, messages } = parseJsonl(await fsp.readFile(file, 'utf8'));
+    // Always start with a header line, so SillyTavern (which expects one) can read it.
+    const header = Object.keys(meta).length ? meta : {
+        user_name: messages.find(m => m.is_user)?.name || 'User',
+        character_name: messages.find(m => !m.is_user && !m.is_system)?.name || '',
+        create_date: stamp(),
+        chat_metadata: {},
+    };
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(req.params.chatId)}.jsonl`);
-    res.type('application/jsonl').send(await fsp.readFile(file, 'utf8'));
+    res.type('application/jsonl').send(toJsonl({ meta: header, messages }));
 });
 
 export default router;
