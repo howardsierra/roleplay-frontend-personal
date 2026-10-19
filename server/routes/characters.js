@@ -107,7 +107,12 @@ router.get('/:id/banner', async (req, res) => {
 router.get('/:id', async (req, res) => res.json(await load(req.params.id)));
 
 router.post('/', async (req, res) => {
-    const character = await createFromCard(req.body.card ?? req.body);
+    const card = req.body?.card ?? req.body;
+    const data = card?.data ?? card;
+    if (!data || typeof data !== 'object' || Array.isArray(data) || typeof (data.name ?? data.char_name ?? '') !== 'string' || !(data.name || data.char_name)) {
+        return res.status(400).json({ error: 'Expected a character card with a name' });
+    }
+    const character = await createFromCard(card);
     res.json(character);
 });
 

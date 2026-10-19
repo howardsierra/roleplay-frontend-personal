@@ -13,6 +13,13 @@ const text = express.text({ type: () => true, limit: '64mb' });
 const dirFor = charId => within(DIRS.chats, charId);
 // The extension is added after cleaning the id, so a long chat name can't lose its ".jsonl".
 const fileFor = (charId, chatId) => path.join(dirFor(charId), `${safeName(chatId)}.jsonl`);
+const exists = file => fsp.access(file).then(() => true, () => false);
+const notFound = msg => Object.assign(new Error(msg), { status: 404 });
+const badRequest = msg => Object.assign(new Error(msg), { status: 400 });
+// Chats belong to a character that exists (a stray request mustn't create folders for nobody).
+async function requireCharacter(charId) {
+    if (!(await exists(within(DIRS.characters, `${charId}.json`)))) throw notFound('No such character');
+}
 // Names straight from readdir are real files: join them as they are (they may predate today's name rules).
 const listedFile = (charId, name) => path.join(dirFor(charId), path.basename(name));
 // New and renamed chats keep names comfortably short.
@@ -161,6 +168,7 @@ async function freeChatId(charId, name) {
 }
 
 router.post('/:charId', async (req, res) => {
+    await requireCharacter(req.params.charId);
     const id = await freeChatId(req.params.charId, req.body?.name || `${req.body?.characterName || 'Chat'} - ${stamp()}`);
     const chat = {
         meta: { user_name: req.body?.userName || 'User', character_name: req.body?.characterName || '', create_date: stamp(), chat_metadata: {} },
@@ -171,11 +179,15 @@ router.post('/:charId', async (req, res) => {
 });
 
 router.put('/:charId/:chatId', async (req, res) => {
+    if (!req.body || typeof req.body !== 'object' || !Array.isArray(req.body.messages)) throw badRequest('Expected { meta, messages: [...] }');
+    await requireCharacter(req.params.charId);
     await writeAtomic(fileFor(req.params.charId, req.params.chatId), toJsonl(req.body));
     res.json({ ok: true });
 });
 
 router.post('/:charId/:chatId/rename', async (req, res) => {
+    if (typeof req.body?.name !== 'string' || !req.body.name.trim()) throw badRequest('A new name is needed');
+    if (!(await exists(fileFor(req.params.charId, req.params.chatId)))) throw notFound('No such chat');
     const to = chatName(req.body.name);
     const target = fileFor(req.params.charId, to);
     if (await fsp.access(target).then(() => true, () => false)) return res.status(409).json({ error: 'A chat with that name already exists' });
@@ -213,6 +225,7 @@ router.post('/:charId/import', text, async (req, res) => {
 
 router.get('/:charId/:chatId/export', async (req, res) => {
     const file = fileFor(req.params.charId, req.params.chatId);
+    if (!(await exists(file))) throw notFound('No such chat');
     const { meta, messages } = parseJsonl(await fsp.readFile(file, 'utf8'));
     // Always start with a header line, so SillyTavern (which expects one) can read it.
     const header = Object.keys(meta).length ? meta : {
