@@ -1,7 +1,7 @@
 // Answers spindle.* calls from Lumiverse extension backends that need Reverie's data or UI.
 // The server forwards them over the bridge; each handler gets (ext, ...args) and returns plain data.
 import { state, saveChat, saveSettingsDebounced, currentPersona, connectionRequest } from '../state.js';
-import { api, completion } from '../api.js';
+import { api, completion, streamCompletion } from '../api.js';
 import { eventSource, event_types } from '../events.js';
 import { samplerParams } from '../prompt.js';
 import { substituteParams, variables } from '../macros.js';
@@ -17,6 +17,7 @@ import {
 import { emitLumiverse, nextGenerationId } from './events.js';
 import { applyThemeOverride, clearThemeOverride, currentThemeInfo } from './theme.js';
 import { generateThemeVariables } from './lumiverse-theme-engine.js';
+import { spawnFrontendProcess, sendToFrontendProcess, stopFrontendProcess, listFrontendProcesses, getFrontendProcess } from './processes.js';
 
 const generateVariables = cfg => generateThemeVariables({ ...currentThemeInfo(), ...(cfg || {}) });
 
@@ -217,6 +218,22 @@ const localVars = {
     has: (_e, chatId, key) => scoped(chatId, () => variables.local.has(key)),
     list: (_e, chatId) => (isActiveChat(chatId) ? { ...(state.chatMeta.chat_metadata?.variables || {}) } : {}),
 };
+// Lumiverse's chat scope (the {{getchatvar}} family) is separate from local: chat_metadata.chat_variables,
+// readable and writable for any chat, not just the open one.
+async function chatVarStore(lvChatId) {
+    const chat = await loadChat(lvChatId || activeChatId());
+    chat.meta.chat_metadata ??= {};
+    chat.meta.chat_metadata.chat_variables ??= {};
+    return { chat, vars: chat.meta.chat_metadata.chat_variables };
+}
+const saveVars = chat => (chat.active ? saveChat() : saveOtherChat(chat));
+const chatVars = {
+    async get(_e, chatId, key) { const v = (await chatVarStore(chatId)).vars[key]; return v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); },
+    async set(_e, chatId, key, value) { const { chat, vars } = await chatVarStore(chatId); vars[key] = value == null ? '' : String(value); await saveVars(chat); },
+    async delete(_e, chatId, key) { const { chat, vars } = await chatVarStore(chatId); delete vars[key]; await saveVars(chat); },
+    async has(_e, chatId, key) { return key in (await chatVarStore(chatId)).vars; },
+    async list(_e, chatId) { return { ...(await chatVarStore(chatId)).vars }; },
+};
 const globalVars = {
     get: (_e, key) => variables.global.get(key),
     set: (_e, key, value) => { variables.global.set(key, value); },
@@ -249,9 +266,13 @@ function connectionFor(id) {
     return p || c;
 }
 
-async function runGeneration(input = {}, kind = 'raw') {
+/**
+ * The provider request for a generate.* call. raw sends only input.parameters; quiet (and batch
+ * entries without parameters) start from the active preset's sampler settings.
+ */
+function generationBody(input = {}, kind = 'raw') {
     const conn = connectionFor(input.connection_id);
-    const params = { ...samplerParams(), ...(input.parameters || {}) };
+    const params = kind === 'raw' ? { ...(input.parameters || {}) } : { ...samplerParams(), ...(input.parameters || {}) };
     if (input.reasoning?.source === 'off') delete params.reasoning_effort;
     const custom = {};
     for (const k of ['response_format', 'tools', 'tool_choice']) if (params[k] !== undefined) { custom[k] = params[k]; delete params[k]; }
@@ -266,22 +287,103 @@ async function runGeneration(input = {}, kind = 'raw') {
         params,
     };
     delete params.model;
-    const res = await completion(body);
-    return { content: res.text || '', reasoning: res.reasoning || undefined, finish_reason: res.finish || res.finish_reason || 'stop', usage: res.usage };
+    // Reverie's provider layer doesn't return tool calls, so tool schemas aren't sent (a model that
+    // chose to call one would answer with nothing); results always carry tool_calls: [].
+    if (input.tools?.length) console.warn('[spindle] generate: tool calling isn\'t supported by Reverie; tools were not sent');
+    return body;
+}
+
+const usageOf = u => (u ? { prompt_tokens: u.prompt_tokens ?? u.input_tokens ?? 0, completion_tokens: u.completion_tokens ?? u.output_tokens ?? 0, total_tokens: u.total_tokens ?? ((u.prompt_tokens ?? u.input_tokens ?? 0) + (u.completion_tokens ?? u.output_tokens ?? 0)) } : undefined);
+
+async function runGeneration(input = {}, kind = 'raw') {
+    const res = await completion(generationBody(input, kind));
+    return { content: res.text || '', reasoning: res.reasoning || undefined, finish_reason: res.finish || res.finish_reason || 'stop', tool_calls: [], usage: usageOf(res.usage) };
+}
+
+/** Streamed generation: chunks go out through this.chunk (host.js), the aggregate is the answer. */
+async function streamGeneration(emit, input = {}, kind = 'raw') {
+    const body = generationBody(input, kind);
+    if (!emit?.chunk) return runGeneration(input, kind);
+    let content = '';
+    let reasoning = '';
+    const res = await streamCompletion(body, {
+        onText: t => { content += t; emit.chunk({ type: 'token', token: t }); },
+        onReasoning: r => { reasoning += r; emit.chunk({ type: 'reasoning', token: r }); },
+    });
+    return { content, reasoning: reasoning || undefined, finish_reason: res.finish || res.finish_reason || 'stop', tool_calls: [], usage: usageOf(res.usage) };
+}
+
+let assembling = 0;
+/** True while spindle.assemble runs, so Lumiverse interceptors don't re-enter. */
+export const isAssembling = () => assembling > 0;
+
+function requireOpenChat(lvChatId, what) {
+    if (lvChatId && !isActiveChat(lvChatId)) throw new Error(`${what} only works on the chat open in Reverie`);
+}
+
+/**
+ * Reverie's real prompt builder, for dryRun/assemble. Supplied blocks replace the active preset's
+ * for this one build (they are normalized and never saved); other preset settings stay.
+ */
+async function assemblePrompt(input = {}, { blocks } = {}) {
+    const { buildPrompt } = await import('../prompt.js');
+    const { makeBlock } = await import('../presets.js');
+    const type = input.generationType || 'normal';
+    const saved = state.preset;
+    assembling++;
+    try {
+        if (blocks) state.preset = { ...saved, blocks: blocks.map(makeBlock), ...(input.promptVariables ? { promptVariables: { ...(saved.promptVariables || {}), ...input.promptVariables } } : {}) };
+        const chat = type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat;
+        return await buildPrompt({ type, dryRun: true, chat });
+    } finally {
+        if (blocks) state.preset = saved;
+        assembling--;
+    }
+}
+
+const breakdownDto = b => (b || []).map(x => ({ type: x.type || 'block', name: x.label || x.name || '', role: x.role || 'system', content: x.content || '', tokens: x.tokens, ...(x.blockId ? { blockId: x.blockId } : {}) }));
+
+async function assembleApi(_e, input = {}) {
+    if (!Array.isArray(input.blocks)) throw new Error('blocks is required');
+    if (input.blocks.length > 256) throw new Error('At most 256 blocks');
+    requireOpenChat(input.chatId, 'spindle.assemble');
+    if (input.signal?.aborted) throw new Error('Aborted');
+    const built = await assemblePrompt(input, { blocks: input.blocks });
+    return { messages: built.messages, breakdown: breakdownDto(built.breakdown) };
 }
 
 const generateApi = {
     raw: (_e, input) => runGeneration(input, 'raw'),
     quiet: (_e, input) => runGeneration(input, 'quiet'),
+    rawStream(_e, input) { return streamGeneration(this, input, 'raw'); },
+    quietStream(_e, input) { return streamGeneration(this, input, 'quiet'); },
     async batch(_e, input) {
         const requests = input?.requests || [];
-        return Promise.all(requests.map((r, index) => runGeneration(r).then(x => ({ index, success: true, ...x }), err => ({ index, success: false, error: err.message }))));
+        const one = (r, index) => runGeneration(r, r.parameters ? 'raw' : 'quiet').then(x => ({ index, success: true, ...x }), err => ({ index, success: false, error: err.message }));
+        if (input?.concurrent === false) {
+            const out = [];
+            for (let i = 0; i < requests.length; i++) out.push(await one(requests[i], i));
+            return out;
+        }
+        return Promise.all(requests.map(one));
     },
-    async dryRun() {
-        const { buildPrompt } = await import('../prompt.js');
-        const { messages, breakdown } = await buildPrompt({ type: 'normal', dryRun: true });
-        return { messages, breakdown, parameters: samplerParams() };
+    async dryRun(_e, input = {}) {
+        requireOpenChat(input.chatId, 'spindle.generate.dryRun');
+        const built = await assemblePrompt(input);
+        const conn = connectionFor(input.connectionId);
+        const parameters = { ...samplerParams(), ...(built.extraParams || {}), ...(input.parameters || {}) };
+        return {
+            messages: built.messages,
+            breakdown: breakdownDto(built.breakdown),
+            parameters,
+            model: parameters.model || conn.model || '',
+            provider: conn.provider || '',
+            tokenCount: { total_tokens: built.tokens || 0, approximate: true },
+            worldInfoStats: { totalCandidates: built.loreTotal ?? 0, activatedBeforeBudget: built.lore?.length ?? 0, activatedAfterBudget: built.lore?.length ?? 0, evictedByBudget: built.cut?.lore?.length ?? 0, evictedByMinPriority: 0, estimatedTokens: 0, recursionPassesUsed: 0 },
+        };
     },
+    assemble: assembleApi,
+    async getBreakdown() { return null; },
 };
 
 const connectionsApi = {
@@ -364,22 +466,30 @@ const imageGenApi = {
 };
 
 // ---------------------------------------------------------------- world info & macros
+// world_books CRUD is answered on the server (server/spindle/content.js); activation and the global
+// set live here because they depend on the open chat and the tab's settings.
+const globalBooks = () => (state.settings.worlds.active ??= []);
+async function worldIds() { return new Set((await api.get('worlds').catch(() => [])).map(w => w.id)); }
+function setGlobalBooks(ids) {
+    state.settings.worlds.active = [...new Set(ids)];
+    saveSettingsDebounced();
+    eventSource.emit(event_types.WORLDINFO_SETTINGS_UPDATED);
+    return [...state.settings.worlds.active];
+}
 const worldApi = {
     async getActivated(_e, lvChatId) {
         if (!isActiveChat(lvChatId)) return [];
         const res = await scanWorldInfo(state.chat.filter(m => !m.is_system), { dryRun: true }).catch(() => null);
-        return (res?.activated || []).map(e => ({ id: `${e.world || 'wi'}:${e.uid}`, comment: e.comment || '', keys: e.key || [], source: 'keyword', bookId: e.world || null, bookSource: 'global', content: e.content }));
+        // Entry ids are "<book>:<uid>"; spindle.world_books.entries.get() accepts them.
+        return (res?.activated || []).map(e => ({ id: e.id || `${e.book || 'wi'}:${e.uid}`, comment: e.comment || '', keys: e.key || [], source: 'keyword', bookId: e.book || null, bookSource: 'global', content: e.content }));
     },
-    entries: {
-        async get(_e, id) {
-            const res = await scanWorldInfo(state.chat.filter(m => !m.is_system), { dryRun: true }).catch(() => null);
-            const e = (res?.activated || []).find(x => `${x.world || 'wi'}:${x.uid}` === id);
-            return e ? { id, content: e.content, comment: e.comment || '', key: e.key || [], priority: e.order ?? 100 } : null;
-        },
-        async list() { return { data: [], total: 0 }; },
+    async getGlobal() { return [...globalBooks()]; },
+    async setGlobal(_e, ids = []) { const known = await worldIds(); return setGlobalBooks((ids || []).filter(id => known.has(id))); },
+    async activateGlobal(_e, id) {
+        if (!(await worldIds()).has(id)) throw notFound('World book');
+        return setGlobalBooks([...globalBooks(), id]);
     },
-    async list() { return { data: [], total: 0 }; },
-    async getGlobal() { return [...(state.settings.worlds?.active || [])]; },
+    async deactivateGlobal(_e, id) { return setGlobalBooks(globalBooks().filter(x => x !== id)); },
 };
 
 const macrosApi = {
@@ -479,8 +589,16 @@ export const backendApi = {
     chats: chatsApi,
     characters: charactersApi,
     personas: personasApi,
-    variables: { local: localVars, chat: localVars, global: globalVars },
+    variables: { local: localVars, chat: chatVars, global: globalVars },
     generate: generateApi,
+    assemble: assembleApi,
+    frontendProcesses: {
+        spawn: (ext, opts) => spawnFrontendProcess(ext, opts),
+        send: (ext, processId, payload) => sendToFrontendProcess(ext, processId, payload),
+        stop: (ext, processId, opts) => stopFrontendProcess(ext, processId, opts),
+        list: (ext, filter) => listFrontendProcesses(ext, filter),
+        get: (ext, processId) => getFrontendProcess(ext, processId),
+    },
     connections: connectionsApi,
     images: imagesApi,
     imageGen: imageGenApi,

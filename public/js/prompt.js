@@ -9,6 +9,7 @@ import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { stripReasoning, reasoningSettings } from './reasoning.js';
 import { scanWorldInfo } from './worldinfo.js';
 import { recallMemories, memoryReserve, memoryFloor, noteMemoryUse } from './memory.js';
+import { interceptCharacterFields, preparePullMacros } from './spindle/hooks.js';
 import { eventSource, event_types } from './events.js';
 import { STRUCTURAL_MARKERS, MARKER_NAMES, makeBlock } from './presets.js';
 
@@ -210,8 +211,12 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     const assistant = isAssistantChat();
     const preset = assistant ? assistantPreset(state.preset) : state.preset;
     if (assistant) skipWIAN = true;
-    const data = state.character?.card?.data ?? {};
+    // Lumiverse extensions can override character fields for this prompt.
+    const data = await interceptCharacterFields(state.character?.card?.data ?? {});
     const meta = chatMetadata();
+    await preparePullMacros([...preset.blocks.map(b => b.content), data.description, data.personality, data.scenario, data.mes_example,
+        data.system_prompt, data.post_history_instructions, meta.note_prompt, currentPersona().description, quietPrompt,
+        ...Object.values(extensionPrompts).map(e => e.value)].filter(Boolean));
     const s = preset.samplers;
     const contextSize = state.settings.generation.maxContextOverride || s.context_size || 64000;
     const responseTokens = maxTokens || s.max_tokens || 1024;

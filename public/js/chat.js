@@ -4,6 +4,7 @@ import { streamCompletion, completion } from './api.js';
 import { eventSource, event_types } from './events.js';
 import { buildPrompt, samplerParams } from './prompt.js';
 import { substituteParams, parseSendDate } from './macros.js';
+import { runContextHandlers, runContentProcessors } from './spindle/hooks.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { splitReasoning, endsInsideThinking, stripReasoning, modelStartsInside, learnStartsInside } from './reasoning.js';
 import { createStreamPainter } from './stream-view.js';
@@ -329,6 +330,9 @@ async function editMessage(id) {
         if (save) {
             const before = mes.mes;
             mes.mes = applyRegex(editor.value, mes.is_user ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT, { isEdit: true });
+            const cp = await runContentProcessors({ content: mes.mes, isUser: !!mes.is_user, origin: 'update', message: mes, extra: mes.extra });
+            mes.mes = cp.content;
+            mes.extra = cp.extra;
             recordEdit(mes, before, mes.mes, 'edit');
             syncSwipe(mes);
             await saveChat();
@@ -654,6 +658,10 @@ export async function sendMessage(text, { generateAfter = true } = {}) {
             extra: {},
             force_avatar: currentPersona().avatar || undefined,
         };
+        // Lumiverse content processors may rewrite a message before it's saved.
+        const cp = await runContentProcessors({ content: mes.mes, isUser: true, origin: 'create', extra: mes.extra });
+        mes.mes = cp.content;
+        mes.extra = cp.extra;
         state.chat.push(mes);
         const id = state.chat.length - 1;
         await eventSource.emit(event_types.MESSAGE_SENT, id);
@@ -714,6 +722,8 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             else prefixText = target.mes + (/\s$/.test(target.mes || '') ? '' : (state.preset.completion.continuePostfix ?? ' '));
         }
 
+        // Lumiverse context handlers can adjust (or cancel) a generation before the prompt is built.
+        if ((await runContextHandlers({ type })).cancelled) return;
         const built = await buildPrompt({ type, quietPrompt, skipWIAN, maxTokens: responseLength || undefined, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
         const { messages, prefill, extraParams } = built;
         if (controller.signal.aborted) throw new DOMException('Stopped', 'AbortError');
@@ -852,6 +862,11 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
         if (!target.mes.trim() && type !== 'continue') {
             target.mes = '';
             throw new Error(reasoning ? 'The AI only sent its thinking and no reply. Try again (or raise the max response length).' : 'The AI sent back an empty reply. Try again, or check the model and settings.');
+        }
+        if (type !== 'quiet') {
+            const cp = await runContentProcessors({ content: target.mes, isUser: false, origin: type === 'swipe' || type === 'regenerate' ? 'swipe_add' : type === 'continue' ? 'update' : 'create', message: target, extra: target.extra });
+            target.mes = cp.content;
+            target.extra = cp.extra;
         }
         target.extra.api = state.settings.connection.provider;
         target.extra.model = state.settings.connection.model;

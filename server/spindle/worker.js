@@ -54,6 +54,50 @@ function call(method, args = []) {
         parentPort.postMessage({ t: 'call', n, method, args: plain(args) });
     });
 }
+
+const abortError = () => (typeof DOMException === 'function' ? new DOMException('The operation was aborted', 'AbortError') : Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+
+/**
+ * A streamed call: the host sends { t: 'chunk' } messages while it runs and a final 'ret' with the
+ * aggregate. Yields the chunks as they arrive, then a terminal done chunk. Hosts (or Reverie tabs)
+ * that can't stream just answer with the aggregate, which is replayed as one chunk.
+ */
+async function* callStream(method, input = {}) {
+    const { signal, ...rest } = input || {};
+    if (signal?.aborted) throw abortError();
+    const queue = [];
+    let wake = null;
+    let finished = null; // { value } | { error }
+    const n = ++seq;
+    const notify = () => { const w = wake; wake = null; w?.(); };
+    pending.set(n, {
+        method,
+        chunk: c => { queue.push(c); notify(); },
+        resolve: value => { finished = { value }; notify(); },
+        reject: error => { finished = { error }; notify(); },
+    });
+    const onAbort = () => { finished ??= { error: abortError() }; notify(); };
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+    parentPort.postMessage({ t: 'call', n, method, args: plain([rest]) });
+    let streamed = false;
+    try {
+        for (;;) {
+            while (queue.length) {
+                const c = queue.shift();
+                if (c && (c.type === 'token' || c.type === 'reasoning') && c.token) { streamed = true; yield c; }
+            }
+            if (finished) break;
+            await new Promise(r => { wake = r; });
+        }
+        if (finished.error) throw finished.error;
+        const r = finished.value || {};
+        if (!streamed) { yield* streamOf(r); return; }
+        yield { type: 'done', content: r.content || '', reasoning: r.reasoning, finish_reason: r.finish_reason || 'stop', tool_calls: r.tool_calls, usage: r.usage };
+    } finally {
+        signal?.removeEventListener?.('abort', onAbort);
+        pending.delete(n); // breaking out early: late chunks are dropped
+    }
+}
 const post = (method, args = []) => parentPort.postMessage({ t: 'post', method, args: plain(args) });
 
 // ---------------------------------------------------------------- handler registries
@@ -76,10 +120,17 @@ function addTo(set, fn) {
     set.add(fn);
     return () => set.delete(fn);
 }
-function registerKind(map, kind, fn, priority = 100) {
+/**
+ * Register a hook with the host. `single`: Lumiverse keeps one handler of this kind per extension,
+ * so a second registration replaces the first.
+ */
+function registerKind(map, kind, fn, priority = 100, opts = {}, single = false) {
+    if (typeof fn !== 'function') throw new TypeError(`${kind} handler must be a function`);
+    if (single) for (const old of [...map.keys()]) { map.delete(old); post('handlers.unregister', [{ kind, id: old }]); }
     const id = `${kind}-${++handlerSeq}`;
-    map.set(id, { fn, priority });
-    post('handlers.register', [{ kind, id, priority }]);
+    const prio = Number.isFinite(Number(priority)) ? Number(priority) : 100;
+    map.set(id, { fn, priority: prio });
+    post('handlers.register', [{ kind, id, priority: prio, timeoutMs: Number(opts?.timeoutMs) || undefined, required: !!opts?.required }]);
     return () => { map.delete(id); post('handlers.unregister', [{ kind, id }]); };
 }
 
@@ -88,6 +139,8 @@ const processes = new Map(); // processId -> { child, handle, info }
 const processMessage = new Set();
 const processLifecycle = new Set();
 const RUNTIME = new URL('./process-runtime.mjs', import.meta.url);
+const frontendProcessMessage = new Set();
+const frontendProcessLifecycle = new Set();
 
 function spawnProcess(opts = {}) {
     const file = path.resolve(dir, String(opts.entry || ''));
@@ -157,17 +210,24 @@ const base = {
     identifier: manifest.identifier,
     log: { info: log('info'), warn: log('warn'), error: log('error'), debug: log('info') },
 
+    // The host is told which events have listeners, so high-volume ones (stream tokens) are only
+    // forwarded to backends that asked for them.
     on(event, fn) {
         if (!listeners.has(event)) listeners.set(event, new Set());
-        listeners.get(event).add(fn);
-        return () => listeners.get(event)?.delete(fn);
+        const set = listeners.get(event);
+        if (!set.size) post('events.listen', [event]);
+        set.add(fn);
+        return () => {
+            if (!set.delete(fn) || set.size) return;
+            post('events.unlisten', [event]);
+        };
     },
 
-    registerInterceptor(fn, priority = 100) { return registerKind(interceptors, 'interceptor', fn, priority); },
-    registerMessageContentProcessor(fn, priority = 100) { return registerKind(contentProcessors, 'contentProcessor', fn, priority); },
-    registerWorldInfoInterceptor(fn, priority = 100) { return registerKind(worldInfoInterceptors, 'worldInfoInterceptor', fn, priority); },
-    registerMacroInterceptor(fn, priority = 100) { return registerKind(macroInterceptors, 'macroInterceptor', fn, priority); },
-    registerContextHandler(fn, priority = 100) { return registerKind(contextHandlers, 'contextHandler', fn, priority); },
+    registerInterceptor(fn, priority = 100, opts) { return registerKind(interceptors, 'interceptor', fn, priority, opts); },
+    registerMessageContentProcessor(fn, priority = 100) { return registerKind(contentProcessors, 'contentProcessor', fn, priority, {}, true); },
+    registerWorldInfoInterceptor(fn, priority = 100) { return registerKind(worldInfoInterceptors, 'worldInfoInterceptor', fn, priority, {}, true); },
+    registerMacroInterceptor(fn, priority = 100, opts) { return registerKind(macroInterceptors, 'macroInterceptor', fn, priority, opts, true); },
+    registerContextHandler(fn, priority = 100, opts) { return registerKind(contextHandlers, 'contextHandler', fn, priority, opts, true); },
 
     registerMacro(def) {
         if (typeof def?.handler === 'function') macroHandlers.set(def.name, def.handler);
@@ -216,24 +276,101 @@ const base = {
         stop: async (processId, opts) => processes.get(processId)?.handle.stop(opts),
     },
 
+    // Frontend processes run in the Reverie tab (public/js/spindle/processes.js).
+    frontendProcesses: {
+        async spawn(opts = {}) {
+            const info = await call('frontendProcesses.spawn', [opts]);
+            return {
+                processId: info.processId, kind: info.kind, key: info.key, info,
+                send: payload => { call('frontendProcesses.send', [info.processId, payload]).catch(() => {}); },
+                stop: o => call('frontendProcesses.stop', [info.processId, o]),
+                refresh: () => call('frontendProcesses.get', [info.processId]),
+            };
+        },
+        send(processId, payload) { call('frontendProcesses.send', [processId, payload]).catch(() => {}); },
+        stop: (processId, opts) => call('frontendProcesses.stop', [processId, opts]),
+        list: filter => call('frontendProcesses.list', [filter]),
+        get: processId => call('frontendProcesses.get', [processId]),
+        onMessage: fn => addTo(frontendProcessMessage, fn),
+        onLifecycle: fn => addTo(frontendProcessLifecycle, fn),
+    },
+
     frontendCapabilities: { declare: (...args) => { post('frontendCapabilities.declare', args); } },
     events: { track: (...args) => { post('events.track', args); } },
     version: { getBackend: () => call('version.getBackend'), getFrontend: () => call('version.getFrontend') },
 
     generate: {
-        // Streams arrive whole from Reverie; they're replayed as one token chunk plus the done chunk.
-        async *rawStream(input) { yield* streamOf(await call('generate.raw', [input])); },
-        async *quietStream(input) { yield* streamOf(await call('generate.quiet', [input])); },
-        // observe() is a convenience over STREAM_TOKEN_RECEIVED / GENERATION_ENDED.
-        observe(handlers = {}) {
-            const offs = [];
-            if (handlers.onToken) offs.push(base.on('STREAM_TOKEN_RECEIVED', handlers.onToken));
-            if (handlers.onStart) offs.push(base.on('GENERATION_STARTED', handlers.onStart));
-            if (handlers.onEnd) offs.push(base.on('GENERATION_ENDED', handlers.onEnd));
-            return () => offs.forEach(off => off());
-        },
+        rawStream(input) { return callStream('generate.rawStream', input); },
+        quietStream(input) { return callStream('generate.quietStream', input); },
+        // AbortSignals can't cross the wire: an already-aborted signal rejects locally, others are dropped.
+        raw(input = {}) { return withSignal('generate.raw', input); },
+        quiet(input = {}) { return withSignal('generate.quiet', input); },
+        batch(input = {}) { return withSignal('generate.batch', input); },
+        observe: observeGeneration,
     },
 };
+
+function withSignal(method, input) {
+    const { signal, ...rest } = input || {};
+    if (signal?.aborted) return Promise.reject(abortError());
+    const p = call(method, [rest]);
+    if (!signal?.addEventListener) return p;
+    return new Promise((resolve, reject) => {
+        const onAbort = () => reject(abortError());
+        signal.addEventListener('abort', onAbort, { once: true });
+        p.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    });
+}
+
+/**
+ * spindle.generate.observe(chatId) → GenerationObserver (Lumiverse worker-runtime semantics).
+ * The older Reverie form observe({ onStart, onToken, onEnd, onStop }) still works and returns a disposer.
+ */
+function observeGeneration(chatIdOrHandlers) {
+    if (chatIdOrHandlers && typeof chatIdOrHandlers === 'object') {
+        const h = chatIdOrHandlers;
+        const offs = [];
+        if (h.onToken) offs.push(base.on('STREAM_TOKEN_RECEIVED', h.onToken));
+        if (h.onStart) offs.push(base.on('GENERATION_STARTED', h.onStart));
+        if (h.onEnd) offs.push(base.on('GENERATION_ENDED', h.onEnd));
+        if (h.onStop) offs.push(base.on('GENERATION_STOPPED', h.onStop));
+        const dispose = () => offs.splice(0).forEach(off => off());
+        return Object.assign(dispose, { dispose });
+    }
+    const chatId = chatIdOrHandlers;
+    const mine = p => chatId == null || p?.chatId === chatId;
+    let start = [];
+    let token = [];
+    let end = [];
+    let stop = [];
+    let content = '';
+    let reasoning = '';
+    let generationId = null;
+    const fire = (list, p) => { for (const fn of list) { try { fn(p); } catch (err) { console.error(`[${manifest.identifier}] observer handler failed:`, err); } } };
+    const offs = [
+        base.on('GENERATION_STARTED', p => { if (!mine(p)) return; generationId = p.generationId; content = ''; reasoning = ''; fire(start, p); }),
+        base.on('STREAM_TOKEN_RECEIVED', p => {
+            if (!mine(p)) return;
+            if (p.type === 'reasoning') reasoning += p.token || ''; else content += p.token || '';
+            fire(token, p);
+        }),
+        base.on('GENERATION_ENDED', p => { if (!mine(p)) return; generationId = null; fire(end, p); }),
+        base.on('GENERATION_STOPPED', p => { if (!mine(p)) return; generationId = null; fire(stop, p); }),
+    ];
+    return {
+        onStart(fn) { if (typeof fn === 'function') start.push(fn); },
+        onToken(fn) { if (typeof fn === 'function') token.push(fn); },
+        onEnd(fn) { if (typeof fn === 'function') end.push(fn); },
+        onStop(fn) { if (typeof fn === 'function') stop.push(fn); },
+        get content() { return content; },
+        get reasoning() { return reasoning; },
+        get generationId() { return generationId; },
+        dispose() {
+            offs.splice(0).forEach(off => off());
+            start = []; token = []; end = []; stop = [];
+        },
+    };
+}
 
 function* streamOf(result) {
     const r = result || {};
@@ -287,7 +424,26 @@ const invokers = {
         const h = interceptors.get(id);
         return h ? h.fn(messages, context) : messages;
     },
-    async contentProcessor({ payload }) { return runSorted(contentProcessors, payload, (fn, v) => fn(v)); },
+    // Lumiverse hooks: one handler per call; the host chains them across extensions by priority.
+    async contentProcessor({ id, ctx, payload }) {
+        if (!id) return runSorted(contentProcessors, payload, (fn, v) => fn(v)); // older host shape
+        const h = contentProcessors.get(id);
+        return h ? h.fn(ctx) : undefined;
+    },
+    async worldInfoInterceptor({ id, ctx }) {
+        const h = worldInfoInterceptors.get(id);
+        return h ? h.fn(ctx) : undefined;
+    },
+    async macroInterceptor({ id, ctx }) {
+        const h = macroInterceptors.get(id);
+        return h ? h.fn(ctx) : undefined;
+    },
+    async contextHandler({ id, context }) {
+        const h = contextHandlers.get(id);
+        if (!h) return context;
+        const controller = new AbortController();
+        return h.fn(context, controller.signal);
+    },
     async macro({ name, ctx }) {
         const fn = macroHandlers.get(name);
         return fn ? String((await fn(ctx)) ?? '') : '';
@@ -298,6 +454,14 @@ const invokers = {
         return fn(args, context);
     },
     async frontendMessage({ payload, userId }) {
+        const fp = payload?.__rvFrontendProcess;
+        if (fp) {
+            const { event, ...rest } = fp;
+            for (const fn of event === 'message' ? frontendProcessMessage : frontendProcessLifecycle) {
+                try { await fn(rest); } catch (err) { console.error(`[${manifest.identifier}] frontend process handler failed:`, err); }
+            }
+            return;
+        }
         for (const fn of frontendHandlers) {
             try { await fn(payload, userId); } catch (err) { console.error(`[${manifest.identifier}] frontend message handler failed:`, err); }
         }
@@ -312,6 +476,10 @@ const invokers = {
 
 parentPort.on('message', async msg => {
     if (msg.t === 'shutdown') { for (const p of processes.values()) p.child.kill(); return; }
+    if (msg.t === 'chunk') {
+        pending.get(msg.n)?.chunk?.(msg.chunk);
+        return;
+    }
     if (msg.t === 'ret') {
         const p = pending.get(msg.n);
         if (!p) return;

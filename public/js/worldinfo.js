@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { state, currentPersona, saveChatDebounced } from './state.js';
 import { substituteParams } from './macros.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
+import { runWorldInfoInterceptors, preparePullMacros } from './spindle/hooks.js';
 
 export const WI_POSITION = { before: 0, after: 1, ANTop: 2, ANBottom: 3, atDepth: 4, EMTop: 5, EMBottom: 6, outlet: 7 };
 export const WI_LOGIC = { AND_ANY: 0, NOT_ALL: 1, NOT_ANY: 2, AND_ALL: 3 };
@@ -481,7 +482,11 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, maxTo
     const rest = strategy === WI_STRATEGY.evenly ? [...groupsOf.character, ...groupsOf.global].sort(byOrder)
         : strategy === WI_STRATEGY.globalFirst ? [...groupsOf.global.sort(byOrder), ...groupsOf.character.sort(byOrder)]
             : [...groupsOf.character.sort(byOrder), ...groupsOf.global.sort(byOrder)];
-    const entries = [...groupsOf.chat.sort(byOrder), ...groupsOf.persona.sort(byOrder), ...rest];
+    let entries = [...groupsOf.chat.sort(byOrder), ...groupsOf.persona.sort(byOrder), ...rest];
+    // Lumiverse world info interceptors can disable, force or rewrite entries before activation.
+    const wiHook = await runWorldInfoInterceptors(entries, { chatMessages, type, dryRun });
+    entries = wiHook.entries;
+    await preparePullMacros(entries.map(e => e.content));
     if (!entries.length) return empty;
     const priority = new Map(entries.map((e, i) => [e.id, i]));
 
@@ -596,8 +601,9 @@ export async function scanWorldInfo(chatMessages, { contextTokens = 64000, maxTo
 
         const forRecursion = added.filter(e => !e.preventRecursion);
         let next = STATE.none;
-        if (cfg.recursive && !overflowed && forRecursion.length) next = STATE.recursion;
-        if (cfg.recursive && !overflowed && scanState === STATE.minActivations && recurse.length) next = STATE.recursion;
+        const recursive = cfg.recursive && !wiHook.disableRecursion;
+        if (recursive && !overflowed && forRecursion.length) next = STATE.recursion;
+        if (recursive && !overflowed && scanState === STATE.minActivations && recurse.length) next = STATE.recursion;
         if (!next && !overflowed && minActivations > 0 && activated.size < minActivations) {
             const depth = globalDepth + skew;
             if (!((minDepthMax > 0 && depth > minDepthMax) || depth > lines.length)) { next = STATE.minActivations; skew++; }

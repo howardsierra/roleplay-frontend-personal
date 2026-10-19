@@ -122,6 +122,7 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 - Their **server part** runs in a worker thread inside Reverie's server, with Lumiverse's `spindle` API: storage, encrypted secrets, the CORS proxy, macros, prompt interceptors, events, child processes (for LumiScript), OAuth callbacks, and the chat/character/persona/generation/image APIs (answered by your open Reverie tab).
 - Their **interface** runs in the page with Lumiverse's `ctx` API: drawer tabs appear as tabs on the character sheet, input-bar actions go in the ✨ menu, plus floating widgets, dock panels, modals, context menus, message tag interceptors and DOM helpers. Lumiverse's `--lumiverse-*` theme variables are generated from your Reverie theme.
 - Extensions must include their built `dist/` folder (Reverie doesn't compile TypeScript).
+- Generation hooks run too: context handlers (can cancel), world info interceptors, macro interceptors, message content processors and pull macros with arguments. `spindle.generate.observe(chatId)` returns Lumiverse's observer, streams are real, and `world_books` / `presets` are available to backends. Unknown `ctx` members are harmless no-ops (with a console warning) instead of crashing an extension.
 
 | Extension | Status |
 |---|---|
@@ -133,6 +134,18 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 | LumiScript | ✅ Scripts run in child processes; the editor loads Monaco from cdn.jsdelivr.net |
 | Spotify Controls | ✅ Panel and mini player; connect your Spotify account from its settings |
 | Palette | ⚠️ Loads; colour "Boost", tokens and custom CSS work, but its element recipes target Lumiverse's own page structure |
+
+## Compatibility checked against SillyTavern, Lumiverse and Marinara Engine
+
+Reverie was audited against the real source of all three, and behaves the same way (or deliberately better) for:
+
+- **Prompt building:** the prompt manager's order, `injection_order` and `forbid_overrides`, in-chat injections merged per depth and role in ST's order, Author's Note interval/position, extension prompts around the main prompt, continue (postfix, nudge and continued text at the end), "send if empty", example dialogue trimmed before history, names behaviour, squash, reasoning added back to recent messages. Lumiverse presets: unset samplers aren't sent, bundled regex, block positions, placement bindings, radio categories, append blocks by depth. Marinara presets import.
+- **Lorebooks:** ST's scan loop (recursion and delay levels, decorators, triggers, groups before chance rolls, token budget with cap and book priority, min activations, timed effects), regex on lore, extra character books.
+- **Macros:** ST's macro set plus Lumiverse's `{{if}}`/`{{unless}}`/`{{switch}}`, comparisons and `{{calc}}`.
+- **Files:** cards (V1, V2, V3, CharX, Pygmalion, Marinara), lorebooks (ST, NovelAI, Agnai, RisuAI, Lumiverse, Marinara), chats (ST, Oobabooga, Agnai, CAI Tools, Kobold Lite, RisuAI, Chub, Marinara with its summaries), and exports that re-embed the linked lorebook.
+- **Agents and memory**, measured against Marinara's: untrusted-data guards, JSON repair and retries, full story context, field-by-field trackers, a rolling synopsis.
+
+Not done: YAML cards, group chats, and server-side conversion of non-PNG avatars (done in the browser instead).
 
 ## Dialogue colors
 

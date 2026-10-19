@@ -10,6 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR, DIRS, readJson, writeJson } from '../lib/storage.js';
 import { bridge } from './bridge.js';
+import { worldBooksApi, presetsApi, resolveContent, NOT_HANDLED } from './content.js';
 
 export const HOST_VERSION = '1.2.0';
 const SPINDLE_DIR = path.join(DATA_DIR, 'spindle');
@@ -145,12 +146,29 @@ function ephemeralApi(id) {
     };
 }
 
+// ---------------------------------------------------------------- permissions
+const PERMISSION_DENIED = 'PERMISSION_DENIED';
+function requirePermission(rt, perm, method) {
+    if (rt.granted.includes(perm)) return;
+    throw Object.assign(new Error(`spindle.${method} needs the "${perm}" permission in spindle.json`), { code: PERMISSION_DENIED });
+}
+// Namespaces answered here from Reverie's stores, and the permission each needs.
+const CONTENT_PERMISSIONS = { world_books: 'world_books', presets: 'presets' };
+
+/** Tell the open tab(s) a lorebook changed on the server, and backends what changed. */
+function contentChanged(name, payload, worldId, deleted = false) {
+    emitAll(name, payload);
+    bridge.broadcast({ type: 'world-changed', id: worldId, deleted, event: name, payload });
+}
+const contentApis = { world_books: worldBooksApi({ changed: contentChanged }), presets: presetsApi() };
+
 // ---------------------------------------------------------------- runtime
 class Runtime {
     constructor(ext) {
         this.ext = ext; // { name, manifest, dir }
         this.id = ext.manifest.identifier;
-        this.handlers = []; // { kind, id, priority }
+        this.handlers = []; // { kind, id, priority, timeoutMs?, required? }
+        this.listening = new Set(); // events the backend has spindle.on() listeners for
         this.macros = new Map(); // name -> { def, value, pull }
         this.tools = new Map();
         this.status = 'starting';
@@ -207,6 +225,7 @@ class Runtime {
         await this.worker?.terminate();
         this.worker = null;
         bridge.broadcast({ type: 'macros', ext: this.id, macros: [] });
+        broadcastHookState();
     }
 
     invoke(kind, args, timeoutMs = 30000) {
@@ -235,11 +254,12 @@ class Runtime {
         }
         if (msg.t === 'post') { this.handle(msg.method, msg.args).catch(err => console.error(`[spindle:${this.id}] ${msg.method}:`, err.message)); return; }
         if (msg.t === 'call') {
+            const onChunk = /Stream$/.test(msg.method) ? chunk => this.worker?.postMessage({ t: 'chunk', n: msg.n, chunk }) : undefined;
             try {
-                const value = await this.handle(msg.method, msg.args);
+                const value = await this.handle(msg.method, msg.args, onChunk);
                 this.worker?.postMessage({ t: 'ret', n: msg.n, value });
             } catch (err) {
-                this.worker?.postMessage({ t: 'ret', n: msg.n, error: err?.message || String(err) });
+                this.worker?.postMessage({ t: 'ret', n: msg.n, error: err?.message || String(err), code: err?.code });
             }
         }
     }
@@ -249,7 +269,7 @@ class Runtime {
     }
 
     /** Answer a call from the worker. */
-    async handle(method, args) {
+    async handle(method, args, onChunk) {
         const [ns, fn] = method.includes('.') ? [method.slice(0, method.indexOf('.')), method.slice(method.indexOf('.') + 1)] : [method, ''];
         const local = {
             storage: this.storage,
@@ -263,8 +283,10 @@ class Runtime {
             return local[fn](...args);
         }
         switch (method) {
-            case 'handlers.register': this.handlers.push(args[0]); return;
-            case 'handlers.unregister': this.handlers = this.handlers.filter(h => h.id !== args[0].id); return;
+            case 'handlers.register': this.handlers.push(args[0]); broadcastHookState(); return;
+            case 'handlers.unregister': this.handlers = this.handlers.filter(h => h.id !== args[0].id); broadcastHookState(); return;
+            case 'events.listen': this.listening.add(String(args[0])); broadcastHookState(); return;
+            case 'events.unlisten': this.listening.delete(String(args[0])); broadcastHookState(); return;
             case 'registerMacro': this.macros.set(args[0].name, { def: args[0], value: this.macros.get(args[0].name)?.value, pull: !!args[0].pull }); this.pushMacros(); return;
             case 'unregisterMacro': this.macros.delete(args[0]); this.pushMacros(); return;
             case 'updateMacroValue': {
@@ -294,9 +316,17 @@ class Runtime {
                 return true;
             case 'users.isVisible': return true;
             case 'users.getRole': return 'owner';
-            default:
+            default: {
+                if (contentApis[ns]) {
+                    const handler = resolveContent(contentApis[ns], fn);
+                    if (handler !== NOT_HANDLED) {
+                        requirePermission(this, CONTENT_PERMISSIONS[ns], method);
+                        return handler(...args);
+                    }
+                }
                 // Everything else (chats, characters, generation, images, UI…) is answered by the Reverie tab.
-                return bridge.call(this.id, method, args);
+                return bridge.call(this.id, method, args, undefined, onChunk);
+            }
         }
     }
 }
@@ -377,4 +407,140 @@ export async function runInterceptors(messages, context) {
         }
     }
     return { messages, parameters, breakdown };
+}
+
+// ---------------------------------------------------------------- hook state & Lumiverse hook chains
+/** What the browser needs to know to skip round-trips: registered hook kinds and listened-to events. */
+export function hookState() {
+    const kinds = {};
+    const events = new Set();
+    for (const rt of runtimes.values()) {
+        for (const h of rt.handlers) kinds[h.kind] = (kinds[h.kind] || 0) + 1;
+        for (const e of rt.listening) events.add(e);
+    }
+    return { kinds, events: [...events] };
+}
+let hookTimer = null;
+function broadcastHookState() {
+    clearTimeout(hookTimer);
+    hookTimer = setTimeout(() => bridge.broadcast({ type: 'hooks', ...hookState() }), 50);
+}
+bridge.onConnect(send => send({ type: 'hooks', ...hookState() }));
+
+function handlersOf(kind) {
+    const all = [];
+    for (const rt of runtimes.values()) for (const h of rt.handlers) if (h.kind === kind) all.push({ rt, h });
+    // Lower priority first; registration order breaks ties (sort is stable).
+    return all.sort((a, b) => a.h.priority - b.h.priority);
+}
+const budget = (h, fallback = 10000) => Math.min(120000, Math.max(1000, Number(h.timeoutMs) || fallback));
+
+/**
+ * Context handlers (before prompt assembly). Each gets the previous one's context; a result with
+ * cancelGeneration: true stops the chain. Errors/timeouts keep the previous context unless the
+ * handler registered { required: true }, which cancels the generation.
+ */
+export async function runContextHandlers(context = {}) {
+    let current = context;
+    for (const { rt, h } of handlersOf('contextHandler')) {
+        try {
+            const out = await rt.invoke('contextHandler', { id: h.id, context: current }, budget(h));
+            if (out && typeof out === 'object' && !Array.isArray(out)) current = out;
+            if (current?.cancelGeneration) return { context: current, cancelled: true, by: rt.id };
+        } catch (err) {
+            console.warn(`[spindle:${rt.id}] context handler skipped: ${err.message}`);
+            if (h.required) return { context: current, cancelled: true, by: rt.id, error: err.message };
+        }
+    }
+    return { context: current, cancelled: false };
+}
+
+/**
+ * World info interceptors (before activation), with Lumiverse's chain rules: a disable vote anywhere
+ * wins over enable/force, content overrides are last-write-wins, each handler sees the previous
+ * handlers' effect on the entry list. ctx.entries are WorldInfoInterceptorEntry DTOs.
+ */
+export async function runWorldInfoInterceptors(ctx = {}) {
+    const entries = Array.isArray(ctx.entries) ? ctx.entries : [];
+    const ids = new Set(entries.map(e => e.id));
+    const disabled = new Set();
+    const enabled = new Set();
+    const forced = new Set();
+    const mutated = {}; // id -> { content?, selectionContent?, outputOrder? }
+    let disableRecursion = false;
+    const working = () => entries.map(e => {
+        const off = disabled.has(e.id);
+        const out = { ...e };
+        if (off) out.disabled = true;
+        else if (enabled.has(e.id) && e.disabled) out.disabled = false;
+        if (!off && forced.has(e.id)) out.constant = true;
+        if (mutated[e.id]?.content !== undefined) out.content = mutated[e.id].content;
+        if (mutated[e.id]?.outputOrder === 'insertion') out.outputOrder = 'insertion';
+        return out;
+    });
+    const settings = ctx.activationSettings || { globalScanDepth: null, maxRecursionPasses: 0 };
+    for (const { rt, h } of handlersOf('worldInfoInterceptor')) {
+        try {
+            const res = await rt.invoke('worldInfoInterceptor', {
+                id: h.id,
+                ctx: { ...ctx, entries: working(), activationSettings: { ...settings, maxRecursionPasses: disableRecursion ? 0 : settings.maxRecursionPasses } },
+            }, budget(h));
+            if (!res || typeof res !== 'object') continue;
+            for (const id of res.disabled || []) disabled.add(String(id));
+            for (const id of res.enabled || []) enabled.add(String(id));
+            for (const id of res.forced || []) forced.add(String(id));
+            for (const m of res.mutated || []) {
+                if (!m || !ids.has(m.id)) continue;
+                const cur = (mutated[m.id] ||= {});
+                if (m.content !== undefined) cur.content = String(m.content);
+                if (m.selectionContent !== undefined) cur.selectionContent = String(m.selectionContent);
+                if (m.outputOrder === 'insertion' || m.outputOrder === 'selection') cur.outputOrder = m.outputOrder;
+            }
+            if (res.activationOverrides?.disableRecursion === true) disableRecursion = true;
+        } catch (err) {
+            console.warn(`[spindle:${rt.id}] world info interceptor skipped: ${err.message}`);
+        }
+    }
+    return {
+        disabled: [...disabled],
+        enabled: [...enabled].filter(id => !disabled.has(id)),
+        forced: [...forced].filter(id => !disabled.has(id)),
+        mutated,
+        disableRecursion,
+    };
+}
+
+/** Macro interceptors: each receives the previous template; a string or { text } replaces it. */
+export async function runMacroInterceptors(ctx = {}) {
+    let template = String(ctx.template ?? '');
+    for (const { rt, h } of handlersOf('macroInterceptor')) {
+        if (!template.includes('{{')) break;
+        try {
+            const res = await rt.invoke('macroInterceptor', { id: h.id, ctx: { ...ctx, template } }, budget(h));
+            if (typeof res === 'string') template = res;
+            else if (res && typeof res.text === 'string') template = res.text;
+        } catch (err) {
+            console.warn(`[spindle:${rt.id}] macro interceptor skipped: ${err.message}`);
+        }
+    }
+    return { text: template };
+}
+
+/** Message content processors: each sees the previous patch; content replaces, extra shallow-merges. */
+export async function runContentProcessors(ctx = {}) {
+    let content = String(ctx.content ?? '');
+    let extra = ctx.extra && typeof ctx.extra === 'object' ? { ...ctx.extra } : {};
+    let changed = false;
+    const keepsExtra = !['swipe_add', 'swipe_update', 'render'].includes(ctx.origin);
+    for (const { rt, h } of handlersOf('contentProcessor')) {
+        try {
+            const res = await rt.invoke('contentProcessor', { id: h.id, ctx: { ...ctx, content, extra } }, budget(h));
+            if (!res || typeof res !== 'object') continue;
+            if (typeof res.content === 'string' && res.content !== content) { content = res.content; changed = true; }
+            if (keepsExtra && res.extra && typeof res.extra === 'object') { extra = { ...extra, ...res.extra }; changed = true; }
+        } catch (err) {
+            console.warn(`[spindle:${rt.id}] content processor skipped: ${err.message}`);
+        }
+    }
+    return { content, extra, changed };
 }

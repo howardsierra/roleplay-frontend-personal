@@ -4,7 +4,8 @@ import { state, currentPersona } from '../state.js';
 import { eventSource, event_types } from '../events.js';
 import { api } from '../api.js';
 import { messageId } from '../message-ids.js';
-import { activeChatId, rawMessage, characterDto, personaDto } from './dto.js';
+import { activeChatId, rawMessage, characterDto, personaDto, chatDto, toChatId } from './dto.js';
+import { backendListens } from './hooks.js';
 
 const local = new Map(); // event -> Set<fn>
 let backendsListening = false;
@@ -22,8 +23,69 @@ export function emitLumiverse(name, payload = {}, { backend = true } = {}) {
         try { fn(payload); } catch (err) { console.error(`[Lumiverse ${name}]`, err); }
     }
     window.dispatchEvent(new CustomEvent(`spindle:${name}`, { detail: payload }));
-    if (backend && backendsListening) api.post('spindle/event', { name, payload }).catch(() => {});
+    if (backend && backendsListening && backendListens(name)) api.post('spindle/event', { name, payload }).catch(() => {});
 }
+
+/** Backend-only delivery (frontends already got the event another way). */
+function emitBackend(name, payload) {
+    if (backendsListening && backendListens(name)) api.post('spindle/event', { name, payload }).catch(() => {});
+}
+
+// Stream tokens reach backends batched (one POST per ~150ms), and only when a backend listens.
+let tokenBatch = null; // { generationId, chatId, messageId, token, seq }
+let tokenTimer = null;
+function flushTokens() {
+    clearTimeout(tokenTimer);
+    tokenTimer = null;
+    const b = tokenBatch;
+    tokenBatch = null;
+    if (b?.token) emitBackend('STREAM_TOKEN_RECEIVED', b);
+}
+function queueBackendToken(p) {
+    if (!backendsListening || !backendListens('STREAM_TOKEN_RECEIVED')) return;
+    if (tokenBatch && tokenBatch.generationId !== p.generationId) flushTokens();
+    tokenBatch = tokenBatch ? { ...tokenBatch, token: tokenBatch.token + p.token, seq: p.seq } : { ...p };
+    tokenTimer ??= setTimeout(flushTokens, 150);
+}
+
+// ---------------------------------------------------------------- CRUD seen through Reverie's API calls
+// Reverie has no events for most library changes, so the API client is watched for them.
+let apiWatched = false;
+function watchApi() {
+    if (apiWatched) return;
+    apiWatched = true;
+    const parts = url => String(url).split('?')[0].split('/').map(decodeURIComponent);
+    const after = (method, fn) => {
+        const orig = api[method];
+        api[method] = async (url, ...args) => {
+            const out = await orig(url, ...args);
+            try { fn(parts(url), out, args[0]); } catch (err) { console.error('[Lumiverse events]', err); }
+            return out;
+        };
+    };
+    const created = (p, out) => {
+        if (p[0] === 'characters' && out?.id && (p.length === 1 || p[1] === 'import' || p[1] === 'assistant' || p[2] === 'duplicate')) {
+            emitLumiverse('CHARACTER_CREATED', { id: out.id, character: characterDto(out) });
+            if (p[2] === 'duplicate') emitLumiverse('CHARACTER_DUPLICATED', { id: out.id, sourceId: p[1], character: characterDto(out) });
+        } else if (p[0] === 'chats' && p.length === 2 && out?.id) {
+            const chat = chatDto(p[1], out.id, out.meta || {});
+            emitLumiverse('CHAT_CREATED', { id: chat.id, chat });
+        } else if (p[0] === 'worlds' && p.length === 1 && out?.id) {
+            emitLumiverse('WORLD_BOOK_CHANGED', { id: out.id, worldBook: worldDto(out) });
+        }
+    };
+    after('post', created);
+    after('upload', created);
+    after('put', (p, out) => {
+        if (p[0] === 'worlds' && p[1]) emitLumiverse('WORLD_BOOK_CHANGED', { id: p[1], worldBook: worldDto(out || { id: p[1] }) });
+    });
+    after('del', p => {
+        if (p[0] === 'chats' && p.length === 3) emitLumiverse('CHAT_DELETED', { id: toChatId(p[1], p[2]) });
+        else if (p[0] === 'worlds' && p[1]) emitLumiverse('WORLD_BOOK_DELETED', { id: p[1] });
+        else if (p[0] === 'presets' && p[1]) emitLumiverse('PRESET_DELETED', { id: p[1] });
+    });
+}
+const worldDto = w => ({ id: w.id, name: w.name || '', description: w.description || '', metadata: { ...(w.metadata || {}) }, created_at: Math.floor((w.created || Date.now()) / 1000), updated_at: Math.floor((w.updated || Date.now()) / 1000) });
 
 // ---------------------------------------------------------------- generations
 let genSeq = 0;
@@ -44,7 +106,11 @@ const msgPayload = id => {
 let knownIds = [];
 const snapshotIds = () => { knownIds = state.chat.map(m => messageId(m)); };
 
+let bridgeInstalled = false;
 export function installEventBridge() {
+    if (bridgeInstalled) return;
+    bridgeInstalled = true;
+    watchApi();
     const on = (type, fn) => eventSource.on(type, (...args) => { try { fn(...args); } catch (err) { console.error(err); } });
 
     on(event_types.CHAT_CHANGED, () => {
@@ -86,6 +152,8 @@ export function installEventBridge() {
         const last = state.chat.at(-1);
         const swiping = type === 'swipe' || type === 'regenerate' || type === 'continue';
         current = { generationId, chatId: activeChatId(), type, targetId: swiping ? state.chat.length - 1 : null };
+        streamed = '';
+        seq = 0;
         emitLumiverse('GENERATION_STARTED', {
             generationId,
             chatId: current.chatId,
@@ -97,19 +165,28 @@ export function installEventBridge() {
             characterName: state.character?.card?.data?.name,
         });
     });
+    // Reverie (like SillyTavern) reports the whole text so far; Lumiverse sends each new chunk.
     let seq = 0;
+    let streamed = '';
     on(event_types.STREAM_TOKEN_RECEIVED, text => {
         if (!current) return;
-        // Frontends get every token; backends rarely need them, so they're spared the traffic.
-        emitLumiverse('STREAM_TOKEN_RECEIVED', { generationId: current.generationId, chatId: current.chatId, token: String(text ?? ''), seq: ++seq, messageId: current.targetId != null ? messageId(state.chat[current.targetId]) : undefined }, { backend: false });
+        const full = String(text ?? '');
+        const token = full.startsWith(streamed) ? full.slice(streamed.length) : full;
+        streamed = full;
+        if (!token) return;
+        const payload = { generationId: current.generationId, chatId: current.chatId, token, seq: ++seq, messageId: current.targetId != null ? messageId(state.chat[current.targetId]) : undefined };
+        emitLumiverse('STREAM_TOKEN_RECEIVED', payload, { backend: false });
+        queueBackendToken(payload);
     });
     on(event_types.GENERATION_STOPPED, () => {
         if (!current) return;
+        flushTokens();
         const m = current.targetId != null ? state.chat[current.targetId] : null;
         emitLumiverse('GENERATION_STOPPED', { generationId: current.generationId, chatId: current.chatId, content: m?.mes || '', messageId: m ? messageId(m) : undefined });
     });
     on(event_types.GENERATION_ENDED, () => {
         if (!current) return;
+        flushTokens();
         const g = current;
         current = null;
         seq = 0;
@@ -126,7 +203,24 @@ export function installEventBridge() {
     on(event_types.CHARACTER_EDITED, () => { if (state.character) emitLumiverse('CHARACTER_EDITED', { id: state.character.id, character: characterDto(state.character) }); });
     on(event_types.CHARACTER_DELETED, data => emitLumiverse('CHARACTER_DELETED', { id: data?.id ?? data }));
     on(event_types.PERSONA_CHANGED, () => emitLumiverse('PERSONA_CHANGED', { persona: personaDto(currentPersona()) }));
-    on(event_types.SETTINGS_UPDATED, () => emitLumiverse('SETTINGS_UPDATED', {}, { backend: false }));
+    // Reverie saves settings often: frontends hear every save, backends one per second at most.
+    let settingsTimer = null;
+    on(event_types.SETTINGS_UPDATED, () => {
+        emitLumiverse('SETTINGS_UPDATED', { keys: [] }, { backend: false });
+        if (settingsTimer) return;
+        settingsTimer = setTimeout(() => { settingsTimer = null; emitBackend('SETTINGS_UPDATED', { keys: [] }); }, 1000);
+    });
+    const personaChanged = (id, deleted = false) => {
+        const p = (state.settings.personas || []).find(x => x.id === id);
+        emitLumiverse('PERSONA_CHANGED', deleted || !p ? { id, deleted: true } : { id, persona: personaDto(p) });
+    };
+    on(event_types.PERSONA_CREATED, data => personaChanged(data?.avatarId || state.settings.personaId));
+    on(event_types.PERSONA_UPDATED, id => personaChanged(typeof id === 'object' ? id?.id : id));
+    on(event_types.PERSONA_DELETED, data => personaChanged(data?.avatarId, true));
+    on(event_types.CHAT_RENAMED, id => {
+        const chatId = toChatId(state.character?.id, id);
+        emitLumiverse('CHAT_CHANGED', { chatId, chat: chatId ? { id: chatId, character_id: state.character?.id } : null, changedFields: ['name'] });
+    });
     on(event_types.PRESET_CHANGED, () => emitLumiverse('PRESET_CHANGED', { presetId: state.preset?.id || null }));
     on(event_types.WORLD_INFO_ACTIVATED, entries => emitLumiverse('WORLD_INFO_ACTIVATED', { entries: (entries || []).map(e => ({ id: e.uid, comment: e.comment, keys: e.key })) }));
 }
