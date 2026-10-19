@@ -96,14 +96,19 @@ function alertsSection() {
 }
 
 function thinkingSection() {
-    const r = state.settings.reasoning || (state.settings.reasoning = { autoParse: true, tags: '', prefix: '', suffix: '' });
+    const r = state.settings.reasoning = { autoParse: true, tags: '', prefix: '', suffix: '', addToPrompts: false, maxAdditions: 1, separator: '\n\n', ...(state.settings.reasoning || {}) };
     const save = () => { saveSettingsDebounced(); printMessages(); };
     return section('Thinking (reasoning models)',
         toggle('Move inline thinking into “Thoughts”', r.autoParse !== false, v => { r.autoParse = v; save(); },
             'Models like DeepSeek R1, QwQ and GLM write <think>…</think> inside the reply. Reverie folds it into the collapsible Thoughts box and never sends it back to the model. Also works when your preset’s prefill opens the tag.'),
-        field('Other tag names', textInput(r.tags || '', v => { r.tags = v; save(); }, { placeholder: 'e.g. scratchpad, plan' }), 'Comma-separated. Already recognised: think, thinking, thought, thoughts, reasoning, reflection.'),
+        field('Other tag names', textInput(r.tags || '', v => { r.tags = v; save(); }, { placeholder: 'e.g. scratchpad, plan' }), 'Comma-separated. Already recognised: think, thinking, reasoning anywhere; thought, thoughts, reflection only when they open the reply.'),
         el('div', { class: 'grid-2' },
             field('Custom start', textInput(r.prefix || '', v => { r.prefix = v; save(); }, { placeholder: 'e.g. [THINK]' })),
             field('Custom end', textInput(r.suffix || '', v => { r.suffix = v; save(); }, { placeholder: 'e.g. [/THINK]' }))),
-        toggle('Thoughts start collapsed', state.settings.render.reasoningCollapsed !== false, v => { state.settings.render.reasoningCollapsed = v; save(); }));
+        toggle('Thoughts start collapsed', state.settings.render.reasoningCollapsed !== false, v => { state.settings.render.reasoningCollapsed = v; save(); }),
+        toggle('Add thinking to prompts', !!r.addToPrompts, v => { r.addToPrompts = v; saveSettingsDebounced(); },
+            'Resend the newest replies’ thinking to the model, wrapped in the custom start/end (or <think>…</think>).'),
+        el('div', { class: 'grid-2' },
+            field('Max additions', (() => { const i = el('input', { class: 'input', type: 'number', min: 0 }); i.value = r.maxAdditions ?? 1; i.addEventListener('input', () => { r.maxAdditions = Math.max(0, Number(i.value) || 0); saveSettingsDebounced(); }); return i; })()),
+            field('Separator', textInput(JSON.stringify(r.separator ?? '\n\n').slice(1, -1), v => { try { r.separator = JSON.parse(`"${v.replace(/"/g, '\\"')}"`); } catch { r.separator = v; } saveSettingsDebounced(); }, { placeholder: '\\n\\n' }), 'Between the thinking and the reply. \\n for a newline.')));
 }

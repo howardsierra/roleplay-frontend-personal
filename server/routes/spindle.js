@@ -6,12 +6,15 @@ import path from 'node:path';
 import { bridge } from '../spindle/bridge.js';
 import { HOST_VERSION, runtimes, listSpindleExtensions, startExtension, stopExtension, setDisabled, spindleState, emitAll, runInterceptors } from '../spindle/host.js';
 import { DIRS, safeName, within } from '../lib/storage.js';
+import { spindleHooksRouter } from '../spindle/routes.js';
 
 export const spindleRouter = express.Router();
 export const spindleServe = express.Router();
 
 spindleRouter.get('/stream', (req, res) => bridge.connect(req, res));
 spindleRouter.post('/reply', (req, res) => { bridge.reply(req.body || {}); res.json({ ok: true }); });
+// Lumiverse generation hooks (context handlers, world info / macro interceptors, content processors).
+spindleRouter.use('/hooks', spindleHooksRouter);
 
 /** Extensions with their runtime status, plus the macros and tools their backends registered. */
 spindleRouter.get('/', async (_req, res) => {

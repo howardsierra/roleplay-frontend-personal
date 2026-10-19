@@ -23,6 +23,10 @@ export async function selectPreset(id, { silent = false } = {}) {
     state.preset = normalizePreset(preset);
     state.settings.presetId = id;
     saveSettingsDebounced();
+    // A preset that brings its own regex scripts asks before they run (not awaited: never blocks loading).
+    import('./regex.js').then(({ askRegexPermission, presetScripts }) => askRegexPermission('preset', { id, name: state.preset.name, scripts: presetScripts(state.preset) }))
+        .then(ok => { if (ok && state.preset?.id === id) import('./chat.js').then(m => state.character && m.printMessages()); })
+        .catch(() => {});
     if (!silent) {
         await eventSource.emit(event_types.OAI_PRESET_CHANGED_AFTER);
         await eventSource.emit(event_types.PRESET_CHANGED, { apiId: 'openai', name: state.preset.name });

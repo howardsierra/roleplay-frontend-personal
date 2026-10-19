@@ -4,7 +4,9 @@ import { state, saveSettingsDebounced, chatMetadata, saveChat } from './state.js
 import { eventSource, event_types } from './events.js';
 import { substituteParams } from './macros.js';
 import { listPresets, selectPreset, savePreset } from './preset-store.js';
-import { lastLore } from './prompt.js';
+import { lastLore, lastCut } from './prompt.js';
+import { memoryTab } from './memory.js';
+import { leftOutView } from './left-out.js';
 import { generateRaw } from './chat.js';
 import { applyTheme } from './themes.js';
 import { points, onPointsChanged } from './rv-ext/points.js';
@@ -255,6 +257,7 @@ function characterTab() {
 
 function loreTab() {
     const lore = lastLore();
+    const cut = lastCut();
     return el('div', { class: 'stack' },
         el('p', { class: 'hint' }, 'Lorebook entries that were active in the last reply.'),
         lore.length
@@ -262,6 +265,8 @@ function loreTab() {
                 el('summary', {}, icon(e.constant ? 'thumbtack' : 'key'), ' ', e.comment || (e.key || []).join(', ') || 'Entry', el('span', { class: 'dim' }, ` · ${e.book}`)),
                 el('div', { class: 'lore-hit-text' }, e.content))))
             : el('div', { class: 'empty small' }, 'Nothing triggered yet.'),
+        cut ? el('h4', { class: 'sheet-subhead' }, icon('scissors'), ' Left out of the last reply') : null,
+        leftOutView(cut),
         el('button', { class: 'btn small', onclick: () => import('./panels/settings.js').then(m => m.openSettings('lore')) }, icon('book-atlas'), 'Manage lorebooks'));
 }
 
@@ -293,7 +298,7 @@ export async function renderSheet() {
     const body = $id('sheet-body');
     if (!body) return;
     const extTab = points.sheetTabs.list().find(t => t.id === sheetTab);
-    if (!extTab && !['character', 'lore', 'scene'].includes(sheetTab)) sheetTab = 'character';
+    if (!extTab && !['character', 'lore', 'memory', 'scene'].includes(sheetTab)) sheetTab = 'character';
     document.querySelectorAll('#sheet-tabs .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === sheetTab));
     if (extTab) {
         const container = el('div', { class: 'rv-ext-panel' });
@@ -305,7 +310,7 @@ export async function renderSheet() {
         }
         return;
     }
-    const content = sheetTab === 'lore' ? loreTab() : sheetTab === 'scene' ? await sceneTab() : characterTab();
+    const content = sheetTab === 'lore' ? loreTab() : sheetTab === 'memory' ? memoryTab() : sheetTab === 'scene' ? await sceneTab() : characterTab();
     body.replaceChildren(content);
 }
 
@@ -383,7 +388,8 @@ function bindSheet() {
     // Leaving for Home closes the sheet, so it can't leave the blurred backdrop behind.
     eventSource.on(event_types.CHAT_CHANGED, id => { if (!id && $id('sheet-panel').classList.contains('open')) closeDrawer('sheet-panel'); });
     eventSource.on(event_types.CHARACTER_EDITED, refresh);
-    eventSource.on(event_types.GENERATION_ENDED, () => { if (sheetTab === 'lore') refresh(); });
+    eventSource.on(event_types.GENERATION_ENDED, () => { if (sheetTab === 'lore' || sheetTab === 'memory') refresh(); });
+    eventSource.on('rv_memory_changed', () => { if (sheetTab === 'memory') refresh(); });
     window.matchMedia(SHEET_DOCK).addEventListener('change', () => {
         document.body.classList.toggle('sheet-docked', wide(SHEET_DOCK) && !!state.settings.ui?.sheetOpen);
     });

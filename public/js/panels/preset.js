@@ -58,14 +58,17 @@ export async function render(body) {
 
     // ----- Samplers -----
     const s = p.samplers;
-    body.append(section('Sampling',
-        slider('Temperature', s.temperature, { min: 0, max: 2, step: 0.01, onChange: change(v => { s.temperature = v; }) }),
-        slider('Top P', s.top_p, { min: 0, max: 1, step: 0.01, onChange: change(v => { s.top_p = v; }) }),
-        slider('Top K', s.top_k, { min: 0, max: 200, step: 1, onChange: change(v => { s.top_k = v; }), hint: '0 = off. Claude, OpenRouter & custom only.' }),
-        slider('Min P', s.min_p, { min: 0, max: 1, step: 0.01, onChange: change(v => { s.min_p = v; }) }),
-        slider('Frequency penalty', s.frequency_penalty, { min: -2, max: 2, step: 0.01, onChange: change(v => { s.frequency_penalty = v; }) }),
-        slider('Presence penalty', s.presence_penalty, { min: -2, max: 2, step: 0.01, onChange: change(v => { s.presence_penalty = v; }) }),
-        slider('Repetition penalty', s.repetition_penalty, { min: 1, max: 2, step: 0.01, onChange: change(v => { s.repetition_penalty = v; }) }),
+    // Moving a slider takes that sampler back from "model default" (Lumiverse presets leave some unset).
+    const live = (key, fn) => change(v => { fn(v); p.samplerOmit = (p.samplerOmit || []).filter(k => k !== key); });
+    const unset = (p.samplerOmit || []).length ? el('p', { class: 'hint' }, `Left to the model (not sent): ${p.samplerOmit.join(', ')}. Move a slider to send it.`) : null;
+    body.append(section('Sampling', unset,
+        slider('Temperature', s.temperature, { min: 0, max: 2, step: 0.01, onChange: live('temperature', v => { s.temperature = v; }) }),
+        slider('Top P', s.top_p, { min: 0, max: 1, step: 0.01, onChange: live('top_p', v => { s.top_p = v; }) }),
+        slider('Top K', s.top_k, { min: 0, max: 200, step: 1, onChange: live('top_k', v => { s.top_k = v; }), hint: '0 = off. Claude, OpenRouter & custom only.' }),
+        slider('Min P', s.min_p, { min: 0, max: 1, step: 0.01, onChange: live('min_p', v => { s.min_p = v; }) }),
+        slider('Frequency penalty', s.frequency_penalty, { min: -2, max: 2, step: 0.01, onChange: live('frequency_penalty', v => { s.frequency_penalty = v; }) }),
+        slider('Presence penalty', s.presence_penalty, { min: -2, max: 2, step: 0.01, onChange: live('presence_penalty', v => { s.presence_penalty = v; }) }),
+        slider('Repetition penalty', s.repetition_penalty, { min: 1, max: 2, step: 0.01, onChange: live('repetition_penalty', v => { s.repetition_penalty = v; }) }),
         el('div', { class: 'grid-2' },
             field('Max response (tokens)', numberInput(s.max_tokens, change(v => { s.max_tokens = v; }))),
             field('Context size (tokens)', numberInput(s.context_size, change(v => { s.context_size = v; })))),
@@ -245,7 +248,7 @@ export async function render(body) {
         field('Continue nudge', textArea(b.continueNudge, change(v => { b.continueNudge = v; }), { rows: 2 })),
         field('Impersonation prompt', textArea(b.impersonationPrompt, change(v => { b.impersonationPrompt = v; }), { rows: 3 })),
         field('Send if empty', textArea(b.sendIfEmpty, change(v => { b.sendIfEmpty = v; }), { rows: 2 }), 'Sent as your message when you press send with an empty box.'),
-        field('Character names', select([[0, 'Don\'t add'], [1, 'As message “name” field'], [2, 'Prefix message content']], c.namesBehavior, change(v => { c.namesBehavior = Number(v); }))),
+        field('Character names', select([[-1, 'Don\'t add'], [0, 'Default (only for lines sent as someone else)'], [1, 'As message “name” field'], [2, 'Prefix message content']], c.namesBehavior, change(v => { c.namesBehavior = Number(v); }))),
         toggle('Continue using prefill', c.continuePrefill, change(v => { c.continuePrefill = v; }), 'Continues by prefilling the last message instead of a nudge.'),
         toggle('Squash consecutive system messages', c.squashSystemMessages, change(v => { c.squashSystemMessages = v; })),
         field('World Info format', textInput(p.formats.wiFormat, change(v => { p.formats.wiFormat = v; })), '{0} is replaced by the activated lore.'),

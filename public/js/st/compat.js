@@ -768,7 +768,17 @@ const live = () => {
         SlashCommandClosure: class {}, SlashCommandClosureResult: class {}, SlashCommandScope: class {}, SlashCommandBreakController: class {},
         SlashCommandNamedArgumentAssignment: class {},
         ConnectionManagerRequestService, ChatCompletionService, TextCompletionService,
-        MacrosParser: { registerMacro, unregisterMacro }, macros: { register: (n, o) => registerMacro(n, o?.handler ?? o) },
+        MacrosParser: { registerMacro, unregisterMacro }, macros: {
+            // ST's newer macro engine calls handlers with one context object ({ name, args, unnamedArgs, raw, env, … }).
+            register: (n, o) => {
+                const handler = o?.handler ?? o;
+                if (typeof handler !== 'function') return;
+                registerMacro(n, (args, env) => {
+                    const list = args === undefined || args === null ? [] : String(args).split('::');
+                    return handler({ name: n, args: list, unnamedArgs: list, rawArgs: list, list: null, namedArgs: null, flags: {}, isScoped: false, raw: args ?? '', rawOriginal: `{{${n}${args ? `::${args}` : ''}}}`, env: env ?? {} });
+                });
+            },
+        },
         accountStorage: ctx.accountStorage, loader: ctx.loader, getPresetManager: () => null, ToolManager: { registerFunctionTool() {}, unregisterFunctionTool() {}, isToolCallingSupported: () => false },
         timestampToMoment: ts => (window.moment ? window.moment(ts) : new Date(ts)),
         sortMoments: (a, b) => (b?.valueOf?.() ?? 0) - (a?.valueOf?.() ?? 0),

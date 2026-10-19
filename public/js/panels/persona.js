@@ -109,6 +109,18 @@ export async function importSillyTavernPersonas(files) {
     if (!src?.personas || typeof src.personas !== 'object') throw new Error('No personas found. Use SillyTavern\'s persona Backup file or its settings.json.');
     const descriptions = src.persona_descriptions || {};
     const images = new Map(files.filter(f => f.type.startsWith('image/')).map(f => [f.name.toLowerCase(), f]));
+    // SillyTavern connects personas to characters by avatar file name ("Alice.png", or "Alice1.png" for a second
+    // Alice): match those to Reverie characters by card name. Unmatched ones are kept as they are.
+    const characters = state.characters?.length ? state.characters : await api.get('characters').catch(() => []);
+    const byName = new Map();
+    for (const c of characters) if (c?.name && !byName.has(c.name.toLowerCase())) byName.set(c.name.toLowerCase(), c.id);
+    const mapConnection = c => {
+        if (!c || typeof c !== 'object') return null;
+        if (c.type !== 'character') return { ...c };
+        const base = String(c.id || '').replace(/\.(png|webp|jpe?g|json)$/i, '').toLowerCase();
+        const id = byName.get(base) || byName.get(base.replace(/\d+$/, '').trim());
+        return id ? { type: 'character', id } : { ...c, unresolved: true };
+    };
 
     let added = 0;
     let skipped = 0;
@@ -132,6 +144,7 @@ export async function importSillyTavernPersonas(files) {
             stAvatar: avatarKey,
             // SillyTavern's description placement, kept for reference: position 0 = in prompt, 2 = top of AN, 3 = bottom of AN, 4 = at depth.
             st: { position: d.position ?? 0, depth: d.depth ?? 2, role: d.role ?? 0, lorebook: d.lorebook || '' },
+            connections: (Array.isArray(d.connections) ? d.connections : []).map(mapConnection).filter(Boolean),
         };
         const img = images.get(String(avatarKey).toLowerCase());
         if (img) {

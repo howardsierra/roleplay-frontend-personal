@@ -69,7 +69,7 @@ export const DEFAULT_COMPLETION = {
     assistantImpersonation: '',
     continuePrefill: false,
     continuePostfix: ' ',
-    namesBehavior: 0, // 0 none, 1 default, 2 in content
+    namesBehavior: 0, // ST: -1 none, 0 default (sendas lines get a name prefix), 1 "name" field, 2 in content
     squashSystemMessages: false,
 };
 
@@ -100,6 +100,11 @@ export function makeBlock(partial = {}) {
         ...(partial.placementBinding ? { placementBinding: partial.placementBinding } : {}),
         ...(partial.characterTagTrigger ? { characterTagTrigger: partial.characterTagTrigger } : {}),
         ...(partial.when ? { when: String(partial.when) } : {}),
+        // ST: order among in-chat prompts at the same depth (higher = closer to the end).
+        ...(partial.injectionOrder !== undefined && partial.injectionOrder !== null && Number(partial.injectionOrder) !== 100 ? { injectionOrder: Number(partial.injectionOrder) } : {}),
+        // ST: the card's own main prompt / post-history instructions can't replace this block.
+        ...(partial.forbidOverrides ? { forbidOverrides: true } : {}),
+        ...(partial.sealed ? { sealed: true } : {}),
     };
 }
 
@@ -144,7 +149,8 @@ export function normalizePreset(p) {
         stopStrings: Array.isArray(p.stopStrings) ? p.stopStrings : [],
         customBody: p.customBody || { enabled: false, rawJson: '{}' },
         promptVariables: p.promptVariables || {},
-        regex: Array.isArray(p.regex) ? p.regex : [],
+        regex: Array.isArray(p.regex) ? p.regex.map(fromLumiverseRegex) : [],
+        samplerOmit: Array.isArray(p.samplerOmit) ? p.samplerOmit : [],
         modelProfiles: Array.isArray(p.modelProfiles) ? p.modelProfiles.map(normalizeProfile) : [],
         meta: { author: '', version: '', description: '', homepage: '', ...(p.meta || {}) },
     };
@@ -167,6 +173,7 @@ export const REVERIE_PRESET_FORMAT = 'reverie-preset';
 export function detectPresetKind(json) {
     if (!json || typeof json !== 'object') return null;
     if (json.format === REVERIE_PRESET_FORMAT) return 'reverie';
+    if (json.type === 'marinara_preset' && json.data) return 'marinara';
     if (Array.isArray(json.blocks)) return 'lumiverse';
     if (Array.isArray(json.prompts) || Array.isArray(json.prompt_order)) return 'sillytavern';
     if ('temperature' in json && ('openai_max_tokens' in json || 'openai_max_context' in json)) return 'sillytavern';
@@ -178,7 +185,8 @@ export function importPreset(json, fallbackName = 'Imported preset') {
     if (kind === 'reverie') return fromReverie(json, fallbackName);
     if (kind === 'lumiverse') return fromLumiverse(json, fallbackName);
     if (kind === 'sillytavern') return fromSillyTavern(json, fallbackName);
-    throw new Error('This file does not look like a SillyTavern or Lumiverse chat-completion preset.');
+    if (kind === 'marinara') return fromMarinara(json, fallbackName);
+    throw new Error('This file does not look like a SillyTavern, Lumiverse or Marinara preset.');
 }
 
 // ---------------- SillyTavern ----------------
@@ -209,6 +217,8 @@ export function fromSillyTavern(st, fallbackName) {
             depth: num(p.injection_depth, 4),
             marker,
             injectionTrigger: Array.isArray(p.injection_trigger) ? p.injection_trigger : [],
+            injectionOrder: num(p.injection_order, 100),
+            forbidOverrides: !!p.forbid_overrides,
         });
     };
 
@@ -272,12 +282,14 @@ export function fromSillyTavern(st, fallbackName) {
 
 export function toSillyTavern(preset) {
     const raw = preset.raw && preset.source === 'sillytavern' ? structuredClone(preset.raw) : {};
+    const rawPrompts = new Map((raw.prompts || []).map(p => [p.identifier, p]));
     const prompts = [];
     const order = [];
     for (const b of preset.blocks) {
         const identifier = b.marker && MARKER_TO_ST[b.marker] ? MARKER_TO_ST[b.marker] : b.id;
         const structural = STRUCTURAL_MARKERS.has(b.marker);
         const entry = {
+            ...(rawPrompts.get(identifier) || {}), // keep fields Reverie doesn't use
             identifier,
             name: b.name,
             system_prompt: !!b.marker,
@@ -286,8 +298,11 @@ export function toSillyTavern(preset) {
             injection_position: b.position === 'in_history' ? 1 : 0,
             injection_depth: b.depth ?? 4,
             injection_trigger: b.injectionTrigger || [],
-            forbid_overrides: false,
+            injection_order: b.injectionOrder ?? 100,
+            forbid_overrides: !!b.forbidOverrides,
         };
+        // ST has no append roles: they become plain prompts there.
+        if (b.role === 'user_append' || b.role === 'assistant_append') entry.role = b.role.replace('_append', '');
         prompts.push(entry);
         order.push({ identifier, enabled: !!b.enabled });
     }
@@ -323,7 +338,8 @@ export function toSillyTavern(preset) {
         continue_postfix: preset.completion.continuePostfix,
         squash_system_messages: preset.completion.squashSystemMessages,
         prompts,
-        prompt_order: [{ character_id: 100001, order }],
+        // Only the global order (100001) is rewritten; per-character orders stay as they were.
+        prompt_order: [{ character_id: 100001, order }, ...(raw.prompt_order || []).filter(o => String(o.character_id) !== '100001')],
         extensions: { ...(raw.extensions || {}), regex_scripts: preset.regex || [] },
     };
 }
@@ -335,11 +351,45 @@ const camelToSampler = {
     repetitionPenalty: 'repetition_penalty', streaming: 'stream',
 };
 
+// Lumiverse only sends samplers when overrides are on; an empty value (or 0 for the sampling knobs) means
+// "leave it to the model", except max tokens and temperature, which default to 16384 and 1.
+const LUMI_ZERO_OMITS = new Set(['temperature', 'topP', 'minP', 'frequencyPenalty', 'presencePenalty', 'repetitionPenalty']);
+const LUMI_SAMPLING = ['temperature', 'topP', 'minP', 'topK', 'frequencyPenalty', 'presencePenalty', 'repetitionPenalty'];
+
+/** Lumiverse regex scripts (snake_case, string placements) → ST/Reverie script shape. */
+export function fromLumiverseRegex(script) {
+    if (!script || script.findRegex !== undefined) return script;
+    const place = { user_input: 1, ai_output: 2, slash_command: 3, world_info: 5, reasoning: 6 };
+    const targets = Array.isArray(script.target) ? script.target : script.target ? [script.target] : [];
+    return {
+        id: script.id || crypto.randomUUID(),
+        scriptName: script.script_name || script.name || 'Imported script',
+        findRegex: script.find_regex || '',
+        replaceString: script.replace_string ?? '',
+        trimStrings: script.trim_strings || [],
+        placement: (script.placement || []).map(p => (typeof p === 'number' ? p : place[p])).filter(p => p !== undefined),
+        disabled: !!script.disabled,
+        markdownOnly: targets.includes('display'),
+        promptOnly: targets.includes('prompt'),
+        runOnEdit: script.run_on_edit !== false,
+        substituteRegex: Number(script.substitute_regex ?? 0) || 0,
+        minDepth: script.min_depth ?? null,
+        maxDepth: script.max_depth ?? null,
+    };
+}
+
 export function fromLumiverse(loom, fallbackName) {
-    const samplers = { ...DEFAULT_SAMPLERS };
-    for (const [k, v] of Object.entries(loom.samplerOverrides || {})) {
-        if (camelToSampler[k] && v !== null && v !== undefined) samplers[camelToSampler[k]] = v;
+    const samplers = { ...DEFAULT_SAMPLERS, max_tokens: 16384 };
+    const so = loom.samplerOverrides || {};
+    const omit = [];
+    for (const [k, v] of Object.entries(so)) {
+        if (!camelToSampler[k]) continue;
+        if (v === null || v === undefined || (v === 0 && LUMI_ZERO_OMITS.has(k))) { if (LUMI_SAMPLING.includes(k) && k !== 'temperature') omit.push(camelToSampler[k]); continue; }
+        samplers[camelToSampler[k]] = v;
     }
+    if (so.temperature === 0) omit.push('temperature');
+    // Overrides off: the model's own sampling defaults.
+    if (!so.enabled) for (const k of LUMI_SAMPLING) if (!omit.includes(camelToSampler[k])) omit.push(camelToSampler[k]);
     const pb = loom.promptBehavior || {};
     const cs = loom.completionSettings || {};
     const adv = loom.advancedSettings || {};
@@ -353,16 +403,18 @@ export function fromLumiverse(loom, fallbackName) {
             role: b.role || 'system',
             position: b.position || 'pre_history',
             depth: num(b.depth, 4),
-            enabled: b.enabled !== false,
+            // Sealed LumiHub blocks only hold a {{presetBlock::…}} placeholder outside Lumiverse.
+            enabled: b.enabled !== false && !b.sealed,
         })),
         samplers,
+        samplerOmit: [...new Set([...omit, 'top_a'])], // Lumiverse has no Top A
         behavior: {
             continueNudge: pb.continueNudge ?? DEFAULT_BEHAVIOR.continueNudge,
             impersonationPrompt: pb.impersonationPrompt ?? DEFAULT_BEHAVIOR.impersonationPrompt,
             newChatPrompt: pb.newChatPrompt ?? DEFAULT_BEHAVIOR.newChatPrompt,
             newExampleChatPrompt: DEFAULT_BEHAVIOR.newExampleChatPrompt,
             groupNudge: pb.groupNudge ?? DEFAULT_BEHAVIOR.groupNudge,
-            sendIfEmpty: pb.sendIfEmpty ?? pb.emptySendNudge ?? '',
+            sendIfEmpty: pb.sendIfEmpty || pb.emptySendNudge || '',
         },
         completion: {
             assistantPrefill: cs.assistantPrefill ?? '',
@@ -375,7 +427,7 @@ export function fromLumiverse(loom, fallbackName) {
         stopStrings: Array.isArray(adv.customStopStrings) ? adv.customStopStrings : [],
         customBody: loom.customBody?.enabled ? loom.customBody : { enabled: false, rawJson: '{}' },
         promptVariables: loom.promptVariables || {},
-        regex: Array.isArray(loom.extensions?.regex_scripts) ? loom.extensions.regex_scripts : [],
+        regex: Array.isArray(loom.extensions?.regex_scripts) ? loom.extensions.regex_scripts.map(fromLumiverseRegex) : [],
     });
     preset.raw = loom;
     return preset;
@@ -390,12 +442,17 @@ export function toLumiverse(preset) {
         description: preset.description || raw.description || '',
         schemaVersion: raw.schemaVersion || 1,
         blocks: preset.blocks.map(b => ({ isLocked: false, ...b })),
-        samplerOverrides: {
-            enabled: true,
-            maxTokens: s.max_tokens, contextSize: s.context_size, temperature: s.temperature, topP: s.top_p,
-            minP: s.min_p, topK: s.top_k, frequencyPenalty: s.frequency_penalty, presencePenalty: s.presence_penalty,
-            repetitionPenalty: s.repetition_penalty, streaming: s.stream,
-        },
+        samplerOverrides: (() => {
+            // Samplers left to the model go back as null, which is how Lumiverse says it.
+            const off = new Set(preset.samplerOmit || []);
+            const v = (key, value) => (off.has(key) ? null : value);
+            return {
+                enabled: true,
+                maxTokens: s.max_tokens, contextSize: s.context_size, temperature: v('temperature', s.temperature), topP: v('top_p', s.top_p),
+                minP: v('min_p', s.min_p), topK: v('top_k', s.top_k), frequencyPenalty: v('frequency_penalty', s.frequency_penalty),
+                presencePenalty: v('presence_penalty', s.presence_penalty), repetitionPenalty: v('repetition_penalty', s.repetition_penalty), streaming: s.stream,
+            };
+        })(),
         customBody: preset.customBody,
         promptBehavior: { ...(raw.promptBehavior || {}), ...preset.behavior },
         completionSettings: { ...(raw.completionSettings || {}), ...preset.completion },
@@ -403,6 +460,94 @@ export function toLumiverse(preset) {
         promptVariables: preset.promptVariables,
         extensions: { ...(raw.extensions || {}), regex_scripts: preset.regex || [] },
     };
+}
+
+// ---------------- Marinara Engine ----------------
+// { type: 'marinara_preset', data: { preset: { sectionOrder, groupOrder, wrapFormat }, sections, groups, choiceBlocks } }.
+// Sections become blocks (wrapped in the preset's XML / Markdown headers the way Marinara wraps them), groups become
+// category headers, and choice blocks become preset options ({{POV}} → {{var::POV}}).
+const MARINARA_MARKERS = {
+    persona: ['persona_description'], lorebook: ['world_info_before'], world_info_before: ['world_info_before'],
+    world_info_after: ['world_info_after'], chat_history: ['chat_history'], dialogue_examples: ['dialogue_examples'],
+};
+const snake = n => String(n || 'section').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'section';
+
+export function fromMarinara(json, fallbackName) {
+    const { preset: mp = {}, sections = [], groups = [], choiceBlocks = [] } = json.data || {};
+    const wrap = mp.wrapFormat || 'xml';
+    const byId = new Map(sections.map(x => [x.id, x]));
+    const groupById = new Map(groups.map(g => [g.id, g]));
+    const flag = v => v === true || v === 'true';
+    const choiceNames = choiceBlocks.map(c => c.variableName).filter(Boolean);
+    const withVars = text => choiceNames.reduce((t, name) => t.replace(new RegExp(`\\{\\{\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\}\\}`, 'g'), `{{var::${name}}}`), String(text || ''));
+    const wrapText = (text, name) => {
+        const t = String(text || '').trim();
+        if (!t || wrap === 'none') return t;
+        if (wrap === 'xml') return `<${snake(name)}>\n${t.split('\n').map(l => `    ${l}`).join('\n')}\n</${snake(name)}>`;
+        return `## ${name}\n${t}`;
+    };
+    const blocks = [];
+    let lastGroup = null;
+    const order = (mp.sectionOrder?.length ? mp.sectionOrder : sections.map(x => x.id)).map(id => byId.get(id)).filter(Boolean);
+    for (const sec of order) {
+        const group = sec.groupId ? groupById.get(sec.groupId) : null;
+        if (group && group !== lastGroup) blocks.push(makeBlock({ name: group.name, marker: 'category', enabled: group.enabled !== false && !flag(group.enabled === 'false') }));
+        lastGroup = group;
+        const enabled = sec.enabled !== false && sec.enabled !== 'false';
+        const base = {
+            name: sec.name || 'Section',
+            role: ['system', 'user', 'assistant'].includes(sec.role) ? sec.role : 'system',
+            enabled,
+            position: sec.injectionPosition === 'depth' ? 'in_history' : 'pre_history',
+            depth: num(sec.injectionDepth, 4),
+            injectionOrder: num(sec.injectionOrder, 100),
+            forbidOverrides: flag(sec.forbidOverrides),
+        };
+        const markerType = flag(sec.isMarker) ? (typeof sec.markerConfig === 'string' ? JSON.parse(sec.markerConfig || '{}') : sec.markerConfig || {}).type : null;
+        if (markerType === 'character') {
+            for (const marker of ['char_description', 'char_personality', 'scenario']) blocks.push(makeBlock({ ...base, name: MARKER_NAMES[marker], marker }));
+        } else if (markerType && MARINARA_MARKERS[markerType]) {
+            for (const marker of MARINARA_MARKERS[markerType]) blocks.push(makeBlock({ ...base, name: MARKER_NAMES[marker] || base.name, marker }));
+        } else if (markerType === 'chat_summary' || markerType === 'recalled_scenes') {
+            blocks.push(makeBlock({ ...base, content: '{{memories}}' }));
+        } else if (markerType) {
+            blocks.push(makeBlock({ ...base, enabled: false, content: `[Marinara-only section: ${markerType}]` }));
+        } else {
+            const skip = flag(sec.skipWrap);
+            blocks.push(makeBlock({ ...base, marker: sec.identifier === 'main' ? 'main_prompt' : null, content: skip ? withVars(sec.content) : wrapText(withVars(sec.content), sec.name) }));
+        }
+    }
+    if (!blocks.some(b => b.marker === 'chat_history')) blocks.push(makeBlock({ name: MARKER_NAMES.chat_history, marker: 'chat_history' }));
+    // Choice blocks → one options block with select variables.
+    if (choiceBlocks.length) {
+        const defaults = mp.defaultChoices || {};
+        const variables = choiceBlocks.map(c => {
+            const options = (c.options || []).map(o => ({ id: o.id || blockId(), label: o.label || o.value, value: o.value ?? '' }));
+            const chosen = defaults[c.variableName];
+            const pick = v => options.find(o => o.value === v || o.label === v || o.id === v)?.id;
+            return c.multiSelect
+                ? { id: c.id || blockId(), name: c.variableName, label: c.question || c.variableName, type: 'multiselect', options, separator: c.separator ?? ', ', defaultValue: (Array.isArray(chosen) ? chosen : chosen ? [chosen] : []).map(pick).filter(Boolean) }
+                : { id: c.id || blockId(), name: c.variableName, label: c.question || c.variableName, type: 'select', options, defaultValue: pick(Array.isArray(chosen) ? chosen[0] : chosen) ?? options[0]?.id };
+        });
+        blocks.unshift(makeBlock({ name: 'Preset options', content: '', enabled: true, variables }));
+    }
+    const p = mp.parameters || {};
+    const preset = normalizePreset({
+        name: mp.name || fallbackName,
+        source: 'marinara',
+        description: mp.description || '',
+        blocks,
+        samplers: {
+            ...DEFAULT_SAMPLERS,
+            ...(Number.isFinite(p.temperature) ? { temperature: p.temperature } : {}),
+            ...(Number.isFinite(p.topP) ? { top_p: p.topP } : {}),
+            ...(Number.isFinite(p.maxTokens) ? { max_tokens: p.maxTokens } : {}),
+            ...(Number.isFinite(p.maxContext) ? { context_size: p.maxContext } : {}),
+        },
+        meta: { author: mp.author || '' },
+    });
+    preset.raw = json;
+    return preset;
 }
 
 // ---------------- Reverie (.rvpreset.json) ----------------

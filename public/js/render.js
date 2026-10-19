@@ -26,7 +26,11 @@ export const displayFilters = new Set(); // fn(text, { isUser, streaming, messag
 export function formatMessage(text, { isUser = false, depth, streaming = false, isReasoning = false, message = null, id = null } = {}) {
     const widgets = [];
     const pics = [];
-    let src = applyRegex(String(text ?? ''), isReasoning ? REGEX_PLACEMENT.REASONING : (isUser ? REGEX_PLACEMENT.USER_INPUT : REGEX_PLACEMENT.AI_OUTPUT), { isMarkdown: true, depth });
+    // Narrator (/sys) messages get the "Slash commands" scripts, like ST.
+    const placement = isReasoning ? REGEX_PLACEMENT.REASONING
+        : isUser ? REGEX_PLACEMENT.USER_INPUT
+        : message?.extra?.type === 'narrator' ? REGEX_PLACEMENT.SLASH_COMMAND : REGEX_PLACEMENT.AI_OUTPUT;
+    let src = applyRegex(String(text ?? ''), placement, { isMarkdown: true, depth });
     if (!isReasoning) {
         for (const filter of displayFilters) {
             try { src = filter(src, { isUser, streaming, message, id }) ?? src; } catch (err) { console.error('Display filter failed', err); }

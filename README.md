@@ -122,6 +122,7 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 - Their **server part** runs in a worker thread inside Reverie's server, with Lumiverse's `spindle` API: storage, encrypted secrets, the CORS proxy, macros, prompt interceptors, events, child processes (for LumiScript), OAuth callbacks, and the chat/character/persona/generation/image APIs (answered by your open Reverie tab).
 - Their **interface** runs in the page with Lumiverse's `ctx` API: drawer tabs appear as tabs on the character sheet, input-bar actions go in the ✨ menu, plus floating widgets, dock panels, modals, context menus, message tag interceptors and DOM helpers. Lumiverse's `--lumiverse-*` theme variables are generated from your Reverie theme.
 - Extensions must include their built `dist/` folder (Reverie doesn't compile TypeScript).
+- Generation hooks run too: context handlers (can cancel), world info interceptors, macro interceptors, message content processors and pull macros with arguments. `spindle.generate.observe(chatId)` returns Lumiverse's observer, streams are real, and `world_books` / `presets` are available to backends. Unknown `ctx` members are harmless no-ops (with a console warning) instead of crashing an extension.
 
 | Extension | Status |
 |---|---|
@@ -134,6 +135,19 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 | Spotify Controls | ✅ Panel and mini player; connect your Spotify account from its settings |
 | Palette | ⚠️ Loads; colour "Boost", tokens and custom CSS work, but its element recipes target Lumiverse's own page structure |
 
+## Compatibility checked against SillyTavern, Lumiverse and Marinara Engine
+
+Reverie was audited against the real source of all three, and behaves the same way (or deliberately better) for:
+
+- **Prompt building:** the prompt manager's order, `injection_order` and `forbid_overrides`, in-chat injections merged per depth and role in ST's order, Author's Note interval/position, extension prompts around the main prompt, continue (postfix, nudge and continued text at the end), "send if empty", example dialogue trimmed before history, names behaviour, squash, reasoning added back to recent messages. Lumiverse presets: unset samplers aren't sent, bundled regex, block positions, placement bindings, radio categories, append blocks by depth. Marinara presets import.
+- **Regex permission:** like SillyTavern, scripts that come inside a character card or a preset only run after you allow them. You're asked the first time that card or preset is opened, and can change it per card / preset in **Settings → Regex**. Your global scripts always run.
+- **Lorebooks:** ST's scan loop (recursion and delay levels, decorators, triggers, groups before chance rolls, token budget with cap and book priority, min activations, timed effects), regex on lore, extra character books.
+- **Macros:** ST's macro set plus Lumiverse's `{{if}}`/`{{unless}}`/`{{switch}}`, comparisons and `{{calc}}`.
+- **Files:** cards (V1, V2, V3, CharX, Pygmalion, Marinara), lorebooks (ST, NovelAI, Agnai, RisuAI, Lumiverse, Marinara), chats (ST, Oobabooga, Agnai, CAI Tools, Kobold Lite, RisuAI, Chub, Marinara with its summaries), and exports that re-embed the linked lorebook.
+- **Agents and memory**, measured against Marinara's: untrusted-data guards, JSON repair and retries, full story context, field-by-field trackers, a rolling synopsis.
+
+Not done: YAML cards, group chats, and server-side conversion of non-PNG avatars (done in the browser instead).
+
 ## Dialogue colors
 
 **Settings → Look → Dialogue colors** colours each speaker's quotes, Smart Dialogue Colorizer–style (colour from the avatar, a fixed colour, or a per-character override, plus saturation/brightness boosts and coloured names). With **multiple speakers**, the AI tags each line with `<font color title="Name">`; known speakers are always repainted with their cast colour and new named speakers are learned into the chat's cast (✨ menu → **Cast colors**). Custom CSS can use `var(--character-color)`.
@@ -143,6 +157,8 @@ Reverie can also run extensions made for [Lumiverse](https://github.com/prolix-o
 - **Generation details** — under each reply, *Show generation details* reveals how long the model thought, how long it wrote, and the tokens in/out (from the provider, or estimated with ≈). *Inspect* opens the **Prompt / Context Inspector** for that reply: every message in the prompt stack with where it came from (preset block, lore, chat message, extension) and a search, which lore entries fired, the exact body sent to the provider (captured on the server, never with headers or keys) and raw JSON, with *Copy stack* / *Copy payload*. ✨ menu → *Prompt inspector* shows a dry run of the next message.
 - **Edit history** — every edit keeps the previous text (per swipe, including changes made by extensions). The *edited* chip next to the name shows each version with a word diff; restoring keeps the current text too.
 - **Scene lighting** — the room's light shifts with the story. The toolbar chip shows the current scene; tap it to pin one or turn it off for that chat. Strength and on/off are in **Look**.
+- **Memory book** — long stories outgrow the context window. Every 15 messages (leaving the newest 4 alone), the older part of the chat is written up as a short memory with a title and keywords, using the agents' connection. Once those messages no longer fit in the prompt, the memories that matter go in instead: the one just before the visible chat, pinned ones, and ones the last few messages talk about, within a token budget. The sheet's **Memory** tab lists them (edit, rewrite, pin, turn off, delete, add your own), shows which were used in the last reply and why, and can catch up an old story in one go.
+- **Left out** — the sheet's Lore tab and the Prompt Inspector's *Left Out* tab show what didn't make it into the last reply and why: older messages that didn't fit (and which memories stood in for them), lore entries that matched but lost a group draw, a chance roll, a cooldown, a delay or the budget, and memories skipped for the budget.
 - **Previously on…** — come back to a story after 6+ hours and a short recap of where things stand appears under the last message (written once and cached). ✨ menu → *Previously on…* writes one any time.
 
 ## Reading, finding and keeping your stories

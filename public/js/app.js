@@ -296,6 +296,7 @@ async function boot() {
     bindHome();
     import('./ambient.js').then(m => m.bindAmbient());
     import('./recap.js').then(m => m.bindRecap());
+    import('./memory.js').then(m => m.bindMemory());
     import('./personas.js').then(m => m.bindPersonas());
     import('./avatar-banner.js').then(m => m.bindAvatarBanner());
     import('./persona-switch.js').then(m => m.bindPersonaSwitch());

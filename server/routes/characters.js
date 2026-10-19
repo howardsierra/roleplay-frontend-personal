@@ -2,8 +2,9 @@ import express from 'express';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { DATA_DIR, DIRS, listJson, newId, readJson, removeFile, within, withLock, writeJson, writeAtomic } from '../lib/storage.js';
-import { isPng, readCardText, writeCardText } from '../lib/png.js';
-import { normalizeCard, placeholderPng, summarize, bannerData } from '../lib/card.js';
+import { isPng, writeCardText } from '../lib/png.js';
+import { normalizeCard, placeholderPng, summarize, bannerData, exportableCard, worldToCharacterBook } from '../lib/card.js';
+import { parseCharacterUpload } from '../lib/importers.js';
 
 const router = express.Router();
 const raw = express.raw({ type: () => true, limit: '64mb' });
@@ -31,10 +32,12 @@ async function saveAvatar(id, buf) {
     return name;
 }
 
-async function createFromCard(card, avatarBuf) {
+async function createFromCard(card, avatarBuf, { fromImport = false } = {}) {
     const id = newId();
-    const character = { id, card: normalizeCard(card), avatar: null, fav: false, created: Date.now(), updated: Date.now() };
-    if (avatarBuf) character.avatar = await saveAvatar(id, avatarBuf);
+    const character = { id, card: normalizeCard(card, { fromImport }), avatar: null, fav: false, created: Date.now(), updated: Date.now() };
+    // Avatars should be PNGs (so PNG export keeps the real picture). The client converts other formats with
+    // toPngBlob after import; an unknown type is dropped rather than failing the whole import.
+    if (avatarBuf) character.avatar = await saveAvatar(id, avatarBuf).catch(() => null);
     await writeJson(charFile(id), character);
     return character;
 }
@@ -141,29 +144,18 @@ router.post('/:id/duplicate', async (req, res) => {
     if (c.avatar) avatar = await fsp.readFile(within(DIRS.avatars, c.avatar)).catch(() => null);
     const card = structuredClone(c.card);
     card.data.name = `${card.data.name} (copy)`;
+    // A copy is not a favourite.
+    if (card.data.extensions) card.data.extensions.fav = false;
     res.json(await createFromCard(card, avatar));
 });
 
-// Import a PNG card (V2 "chara" / V3 "ccv3" chunk) or a JSON card.
+// Import a character: PNG card (V2 "chara" / V3 "ccv3"), CharX (.charx), or JSON (SillyTavern V1/V2/V3,
+// gradio/Pygmalion, Marinara Engine's native export). Extra lorebooks a CharX carries (Lumiverse world books)
+// come back as `books` for the client to create; `avatarIsPng: false` asks the client to convert the avatar.
 router.post('/import', raw, async (req, res) => {
-    const buf = req.body;
-    if (!Buffer.isBuffer(buf) || !buf.length) return res.status(400).json({ error: 'Empty upload' });
-    let card;
-    let avatar = null;
-    if (isPng(buf)) {
-        const text = readCardText(buf);
-        const json = text.ccv3 || text.chara;
-        if (!json) return res.status(400).json({ error: 'This PNG has no character data in it' });
-        card = JSON.parse(json);
-        avatar = buf;
-    } else {
-        try {
-            card = JSON.parse(buf.toString('utf8'));
-        } catch {
-            return res.status(400).json({ error: 'Not a PNG or JSON character card' });
-        }
-    }
-    res.json(await createFromCard(card, avatar));
+    const { card, avatar, books } = await parseCharacterUpload(req.body);
+    const character = await createFromCard(card, avatar, { fromImport: true });
+    res.json({ ...character, books, avatarIsPng: !character.avatar || path.extname(character.avatar) === '.png' });
 });
 
 router.post('/:id/avatar', raw, async (req, res) => {
@@ -176,18 +168,34 @@ router.post('/:id/avatar', raw, async (req, res) => {
     res.json(c);
 });
 
+/** The card to export: the linked lorebook (extensions.world) is re-embedded as character_book, like SillyTavern. */
+async function cardForExport(c) {
+    const card = structuredClone(c.card);
+    const worldName = card.data.extensions?.world;
+    if (worldName) {
+        const world = (await listJson(DIRS.worlds)).find(w => w.data?.name === worldName)?.data;
+        if (world?.entries) card.data.character_book = worldToCharacterBook(worldName, world.entries);
+    }
+    return exportableCard(card);
+}
+
 router.get('/:id/export.:fmt', async (req, res) => {
     const c = await load(req.params.id);
     const filename = encodeURIComponent(c.card.data.name || 'character');
+    const card = await cardForExport(c);
     if (req.params.fmt === 'json') {
         res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filename}.json`);
-        return res.json(c.card);
+        return res.json(card);
     }
+    // Avatars are stored as PNG (uploads and imports are converted). An older JPEG/WebP avatar can't be
+    // re-encoded here without an image library, so it falls back to the placeholder (the client converts first).
     let png = null;
-    if (c.avatar && path.extname(c.avatar) === '.png') png = await fsp.readFile(within(DIRS.avatars, c.avatar)).catch(() => null);
+    if (c.avatar) png = await fsp.readFile(within(DIRS.avatars, c.avatar)).catch(() => null);
+    if (png && !isPng(png)) png = null;
     if (!png) png = placeholderPng(c.card.data.name);
+    // The "chara" chunk holds V2 (what most readers expect); writeCardText adds the V3 "ccv3" copy.
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filename}.png`);
-    res.type('png').send(writeCardText(png, c.card));
+    res.type('png').send(writeCardText(png, { ...card, spec: 'chara_card_v2', spec_version: '2.0' }));
 });
 
 export default router;

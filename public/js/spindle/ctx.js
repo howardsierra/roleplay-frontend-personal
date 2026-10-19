@@ -11,6 +11,8 @@ import { confirmDialog, el } from '../ui.js';
 import { activeChatId } from './dto.js';
 import { sheetState, openSheetTab } from '../layout.js';
 import { onLumiverse } from './events.js';
+import { createSandboxFrame } from './sandbox.js';
+import { registerFrontendProcess, disposeFrontendProcesses } from './processes.js';
 
 const sanitize = html => DOMPurify.sanitize(String(html ?? ''), { ADD_TAGS: ['style'], ADD_ATTR: ['target'], FORBID_TAGS: ['script'] });
 
@@ -340,6 +342,98 @@ function mountModelCombobox(target, o = {}) {
     return h;
 }
 
+// ---------------------------------------------------------------- message widgets
+const widgets = new Map(); // `${ext}\u0000${messageId}\u0000${widgetId}` -> { frame, wrapper, offMessage }
+function widgetKey(ext, mid, wid) { return `${ext}\u0000${mid}\u0000${wid}`; }
+
+// ---------------------------------------------------------------- client info
+function clientInfo() {
+    const nav = navigator;
+    const ua = nav.userAgent || '';
+    const plat = nav.userAgentData?.platform || nav.platform || '';
+    const platform = /iPad|iPhone|iPod/i.test(ua) || (plat === 'MacIntel' && nav.maxTouchPoints > 1) ? 'ios'
+        : /android/i.test(`${plat} ${ua}`) ? 'android'
+            : /mac/i.test(plat) || /Mac OS X/i.test(ua) ? 'macos'
+                : /win/i.test(plat) || /Windows/i.test(ua) ? 'windows'
+                    : /linux/i.test(`${plat} ${ua}`) ? 'linux' : 'unknown';
+    const pwa = nav.standalone === true || ['standalone', 'minimal-ui', 'window-controls-overlay'].some(m => window.matchMedia?.(`(display-mode: ${m})`).matches);
+    return Object.freeze({
+        kind: pwa ? 'pwa' : 'browser',
+        platform,
+        isMobile: platform === 'ios' || platform === 'android' || nav.userAgentData?.mobile === true,
+        bridges: Object.freeze({ desktop: false, ios: false, android: false }),
+        host: 'reverie',
+    });
+}
+
+/** ctx.files.download: Lumiverse file ids aren't stored by Reverie; data, Blobs and URLs are saved directly. */
+function downloadFile(ext, source, name) {
+    let url = null;
+    let revoke = false;
+    if (source instanceof Blob) { url = URL.createObjectURL(source); revoke = true; } else if (source instanceof Uint8Array || source instanceof ArrayBuffer) { url = URL.createObjectURL(new Blob([source])); revoke = true; } else if (source && typeof source === 'object') {
+        const data = source.data ?? source.bytes ?? source.content;
+        name ||= source.fileName || source.filename || source.name;
+        if (source.url) url = source.url;
+        else if (data !== undefined) { url = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type: source.mimeType || source.type || 'application/octet-stream' })); revoke = true; }
+    } else if (typeof source === 'string' && /^(data:|blob:|https?:|\/)/i.test(source)) url = source;
+    if (!url) {
+        console.warn(`[${ext}] ctx.files.download: Reverie doesn't keep backend-staged files (spindle.files); nothing to download for`, source);
+        return false;
+    }
+    const a = el('a', { href: url, download: name || '', style: { display: 'none' } });
+    document.body.append(a);
+    try { a.click(); } finally { a.remove(); if (revoke) setTimeout(() => URL.revokeObjectURL(url), 30000); }
+    return true;
+}
+
+// ---------------------------------------------------------------- unknown members
+/**
+ * Lumiverse adds ctx members faster than Reverie can follow. Anything ctx (or one of its namespaces)
+ * doesn't have becomes a no-op that warns once and returns a harmless callable (usable as a
+ * disposer, and chainable), instead of undefined crashing the extension's setup().
+ */
+function makeSoft(id) {
+    const warned = new Set();
+    const warn = path => {
+        if (warned.has(path)) return;
+        warned.add(path);
+        console.warn(`[${id}] ${path} isn't available in Reverie; ignored.`);
+    };
+    const SKIP = new Set(['then', 'toJSON', 'constructor', 'prototype', 'valueOf', 'toString', 'asymmetricMatch', '$$typeof', 'nodeType']);
+    function stub(path) {
+        const fn = function () {};
+        return new Proxy(fn, {
+            get(t, key) {
+                if (typeof key === 'symbol' || SKIP.has(key)) return key === Symbol.toPrimitive ? () => '' : t[key];
+                if (key === 'length' || key === 'name') return t[key];
+                return stub(`${path}.${key}`);
+            },
+            apply() { warn(path); return stub(`${path}()`); },
+        });
+    }
+    const isPlain = v => v && typeof v === 'object' && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);
+    const cache = new WeakMap();
+    function soft(obj, path) {
+        if (cache.has(obj)) return cache.get(obj);
+        const proxy = new Proxy(obj, {
+            get(t, key, recv) {
+                if (typeof key === 'symbol' || key in t) {
+                    const v = Reflect.get(t, key, recv);
+                    // Namespaces are softened too; data objects (manifest, host) stay as they are.
+                    if (typeof key === 'string' && isPlain(v) && !DATA_KEYS.has(key) && !Object.isFrozen(v)) return soft(v, `${path}.${key}`);
+                    return v;
+                }
+                if (SKIP.has(key)) return undefined;
+                return stub(`${path}.${key}`);
+            },
+        });
+        cache.set(obj, proxy);
+        return proxy;
+    }
+    return soft;
+}
+const DATA_KEYS = new Set(['manifest', 'host', 'capabilities', 'geometry']);
+
 // ---------------------------------------------------------------- ctx
 const mountRoots = new Map(); // `${ext}:${point}` -> element
 export const settingsMounts = () => [...mountRoots.entries()].filter(([k]) => k.endsWith(':settings_extensions'));
@@ -355,6 +449,14 @@ export function createCtx(ext, channel) {
     const styles = new Set();
     const created = new Set();
     const id = ext.id;
+    const frames = new Set();
+    const noopDisposer = () => {};
+    const hostTab = (kind, opts = {}) => {
+        // Reverie's character and preset editors have no extension tabs: hand back an inert handle.
+        console.warn(`[${id}] ctx.ui.${kind} isn't supported in Reverie; the tab won't be shown.`);
+        const root = el('div', { 'data-lv-ext': id });
+        return { root, tabId: `lv:${id}:${opts.id || kind}`, setTitle() {}, setShortName() {}, setBadge() {}, activate() {}, onActivate: () => noopDisposer, destroy() { root.remove(); } };
+    };
 
     const ctx = {
         manifest: structuredClone(ext.manifest),
@@ -367,6 +469,24 @@ export function createCtx(ext, channel) {
         onBackendMessage: fn => track(channel.onMessage(fn)),
 
         getActiveChat: () => ({ chatId: activeChatId(), characterId: state.character?.id || null }),
+        onTeardown: fn => track(() => fn?.()),
+
+        client: { getInfo: clientInfo },
+
+        files: {
+            download: (source, name) => downloadFile(id, source, name),
+        },
+
+        processes: {
+            register: (kind, handler) => track(registerFrontendProcess(id, kind, handler)),
+        },
+
+        display: {
+            // Reverie renders messages itself; display resolvers/expressions aren't consulted.
+            registerResolver: () => noopDisposer,
+            invalidate() {},
+            setExpression() {},
+        },
 
         permissions: {
             getGranted: async () => [...ext.granted],
@@ -388,6 +508,45 @@ export function createCtx(ext, channel) {
 
         messages: {
             getLatestMessageId: () => (state.chat.length ? messageId(state.chat.at(-1)) : null),
+            listMessageIds: () => state.chat.map(m => messageId(m)),
+            getMessageIdAtIndex(index) {
+                const n = state.chat.length;
+                const i = Number(index) < 0 ? n + Number(index) : Number(index);
+                return Number.isInteger(i) && i >= 0 && i < n ? messageId(state.chat[i]) : null;
+            },
+            /** A sandboxed iframe widget under a message (re-attached when the message re-renders). */
+            renderWidget(opts = {}, handler) {
+                const mid = String(opts.messageId || '');
+                const wid = String(opts.widgetId || 'default');
+                if (!mid) throw new Error('messageId is required');
+                const key = widgetKey(id, mid, wid);
+                const existing = widgets.get(key);
+                if (existing) {
+                    existing.frame.setContent(opts.html || '');
+                    existing.offMessage?.();
+                    existing.offMessage = typeof handler === 'function' ? existing.frame.onMessage(handler) : null;
+                    return existing.dispose;
+                }
+                const frame = createSandboxFrame(id, { html: opts.html || '', minHeight: opts.minHeight ?? 40, maxHeight: opts.maxHeight ?? 4000 });
+                const wrapper = el('div', { 'data-spindle-ext': id, class: 'lv-injected lv-message-widget', 'data-widget-id': wid });
+                wrapper.append(frame.element);
+                const entry = { ext: id, wrapper, messageId: mid, inText: true, position: 'beforeend' };
+                injections.add(entry);
+                document.querySelector(`#chat [data-message-id="${CSS.escape(mid)}"] .mes_text`)?.insertAdjacentElement('beforeend', wrapper);
+                const record = { frame, wrapper, offMessage: typeof handler === 'function' ? frame.onMessage(handler) : null };
+                record.dispose = () => {
+                    if (widgets.get(key) !== record) return;
+                    widgets.delete(key);
+                    record.offMessage?.();
+                    frame.destroy();
+                    wrapper.remove();
+                    injections.delete(entry);
+                };
+                widgets.set(key, record);
+                track(record.dispose);
+                return record.dispose;
+            },
+            removeWidget(mid, wid) { widgets.get(widgetKey(id, String(mid), String(wid || 'default')))?.dispose(); },
             registerTagInterceptor(opts = {}, handler) {
                 const entry = { ext: id, tagName: String(opts.tagName || '').trim().toLowerCase(), attrs: opts.attrs || null, remove: opts.removeFromMessage !== false, handler };
                 if (!entry.tagName) throw new Error('tagName is required');
@@ -429,6 +588,28 @@ export function createCtx(ext, channel) {
                 injected.delete(wrapper);
                 for (const inj of injections) if (inj.wrapper === wrapper) injections.delete(inj);
             },
+            /** querySelector limited to what this extension put on the page. */
+            query(selector) { return ctx.dom.queryAll(selector)[0] || null; },
+            queryAll(selector) {
+                const scope = CSS.escape(id);
+                try {
+                    return [...document.querySelectorAll(`[data-spindle-ext="${scope}"] ${selector}, [data-lv-ext="${scope}"] ${selector}`)];
+                } catch (err) {
+                    console.warn(`[${id}] ctx.dom.query: bad selector`, selector, err.message);
+                    return [];
+                }
+            },
+            getMessageId(target) {
+                if (!target || typeof target.closest !== 'function') return null;
+                return target.closest('[data-message-id]')?.getAttribute('data-message-id') ?? null;
+            },
+            createSandboxFrame(opts = {}) {
+                const frame = createSandboxFrame(id, { ...opts, allowEval: opts.allowEval === true && ext.granted.includes('unsafe_eval') });
+                frames.add(frame);
+                const destroy = frame.destroy;
+                frame.destroy = () => { frames.delete(frame); destroy(); };
+                return frame;
+            },
             findMessageElement: mid => document.querySelector(`#chat [data-message-id="${CSS.escape(String(mid))}"]`),
             listMessageElements: () => [...document.querySelectorAll('#chat [data-message-id]')].map(element => ({ messageId: element.getAttribute('data-message-id'), element })),
             cleanup() {
@@ -439,6 +620,7 @@ export function createCtx(ext, channel) {
                 styles.clear();
                 for (const n of created) n.remove();
                 created.clear();
+                for (const f of [...frames]) f.destroy();
             },
         },
 
@@ -526,6 +708,29 @@ export function createCtx(ext, channel) {
                 onSettingsChange: () => () => {},
             },
             requestTabLocation() {},
+            registerCharacterEditorTab: opts => hostTab('registerCharacterEditorTab', opts),
+            registerPresetEditorTab: opts => hostTab('registerPresetEditorTab', opts),
+            registerSettingsTab: opts => {
+                // Settings tabs live in Reverie's Extensions settings, the same place as mount('settings_extensions').
+                const root = ctx.ui.mount('settings_extensions');
+                const box = el('div', { class: 'lv-settings-tab', 'data-lv-ext': id }, opts?.title ? el('h4', {}, opts.title) : null);
+                root.append(box);
+                return { root: box, tabId: `lv:${id}:${opts?.id || 'settings'}`, setTitle() {}, activate() {}, onActivate: () => noopDisposer, destroy() { box.remove(); } };
+            },
+            characterEditor: {
+                getState: () => ({ open: false, characterId: null, character: null, extensions: {} }),
+                onChange: () => noopDisposer,
+                setExtensions() {},
+                updateExtensions() {},
+                flush: async () => {},
+            },
+            presetEditor: {
+                get extension() { return null; },
+                getState: () => ({ open: false, presetId: state.preset?.id || null, preset: null }),
+                onChange: () => noopDisposer,
+                updatePreset() {},
+                flush: async () => {},
+            },
         },
 
         uploads: {
@@ -570,11 +775,13 @@ export function createCtx(ext, channel) {
     };
 
     return {
-        ctx,
+        ctx: makeSoft(id)(ctx, 'ctx'),
         dispose() {
             for (const fn of disposers.splice(0).reverse()) { try { fn(); } catch (err) { console.error(err); } }
             ctx.dom.cleanup();
+            disposeFrontendProcesses(id);
             for (const t of [...tagInterceptors]) if (t.ext === id) tagInterceptors.delete(t);
+            for (const [key, w] of [...widgets]) if (key.startsWith(`${id}\u0000`)) w.dispose();
         },
     };
 }
