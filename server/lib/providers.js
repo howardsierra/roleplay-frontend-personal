@@ -214,8 +214,9 @@ export function toAnthropic(messages, { cacheSystem = true } = {}) {
     const out = [];
     for (const m of messages.slice(i)) {
         const role = m.role === 'assistant' ? 'assistant' : 'user';
-        // Mid-chat system prompts become user turns (Claude has no mid-chat system role).
-        const content = m.content;
+        // Mid-chat system prompts become user turns (Claude has no mid-chat system role). Claude has no
+        // "name" field either, so names go in front of the text (as ST does).
+        const content = m.name && typeof m.content === 'string' && !m.content.startsWith(`${m.name}: `) ? `${m.name}: ${m.content}` : m.content;
         const last = out.at(-1);
         const multimodal = Array.isArray(content) || Array.isArray(last?.content);
         if (last && last.role === role) {
@@ -224,6 +225,14 @@ export function toAnthropic(messages, { cacheSystem = true } = {}) {
         } else out.push({ role, content: Array.isArray(content) ? anthropicBlocks(content) : String(content ?? '') });
     }
     if (!out.length || out[0].role !== 'user') out.unshift({ role: 'user', content: '[Start]' });
+    // A second cache point a few turns back: the older chat is the same next turn, so it's read from cache.
+    const anchor = out.length - 6;
+    if (cacheSystem && anchor > 0) {
+        const msg = out[anchor];
+        msg.content = Array.isArray(msg.content) ? msg.content : [{ type: 'text', text: String(msg.content ?? '') }];
+        const lastText = msg.content.findLast(b => b.type === 'text' && b.text);
+        if (lastText) lastText.cache_control = { type: 'ephemeral' };
+    }
     const systemText = system.join('\n\n').trim();
     const systemBlocks = systemText ? [{ type: 'text', text: systemText, ...(cacheSystem ? { cache_control: { type: 'ephemeral' } } : {}) }] : undefined;
     return { system: systemBlocks, messages: out.filter(m => m.content !== '' || m === out.at(-1)) };

@@ -466,6 +466,7 @@ export async function editCharacter(id, { isNew = false } = {}) {
                 })(), '0 = after the last message.'),
                 field('Note role', select([['system', 'System'], ['user', 'User'], ['assistant', 'Assistant']], depthPrompt.role, v => { depthPrompt.role = v; }))),
             field('Linked lorebook (name)', textInput(d.extensions?.world || '', v => { d.extensions = { ...(d.extensions || {}), world: v }; })),
+            field('Extra lorebooks', textInput((d.extensions?.extra_worlds || []).join(', '), v => { d.extensions = { ...(d.extensions || {}), extra_worlds: v.split(',').map(s => s.trim()).filter(Boolean) }; }, { placeholder: 'names, comma separated' }), 'Also active whenever this character is.'),
             field('Character version', textInput(d.character_version, v => { d.character_version = v; }))),
         Banner: el('div', { class: 'stack' },
             el('p', { class: 'hint' }, 'A strip of art across the top of this character\'s messages (Avatar Banner). Changes save right away.'),
@@ -518,6 +519,7 @@ export async function editCharacter(id, { isNew = false } = {}) {
             const { extensions, ...fields } = structuredClone(d);
             const ext = { world: extensions?.world || '' };
             if (extensions?.depth_prompt) ext.depth_prompt = extensions.depth_prompt;
+            if (extensions?.extra_worlds) ext.extra_worlds = extensions.extra_worlds;
             const saved = await api.put(`characters/${encodeURIComponent(id)}`, { data: fields, extensions: ext });
             character.card = saved.card;
             if (state.character?.id === id) {

@@ -108,7 +108,8 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
     node.querySelector('.timestamp').textContent = state.settings.appearance.showTimestamps ? formatTime(mes.send_date) : '';
     node.querySelector('.rv-edited')?.classList.toggle('hidden', streaming || !hasHistory(mes));
 
-    const depth = state.chat.length - 1 - id;
+    // ST counts regex depth over visible (non-system) messages only; hidden ones get no depth.
+    const depth = mes.is_system ? undefined : state.chat.slice(id + 1).filter(m => !m.is_system).length;
     const textEl = node.querySelector('.mes_text');
     // Messages saved with inline <think> blocks (older chats, imports, extension edits): show the story only.
     const inline = !streaming && !mes.is_user ? splitReasoning(mes.mes) : { reasoning: '', text: mes.mes };
@@ -121,7 +122,7 @@ export function renderMessageInto(node, mes, id, { streaming = false } = {}) {
     const det = node.querySelector('.mes_reasoning_details');
     det.classList.toggle('hidden', !reasoning);
     if (reasoning) {
-        const r = formatMessage(reasoning, { isReasoning: true, streaming: true });
+        const r = formatMessage(reasoning, { isReasoning: true, streaming: true, depth });
         const rEl = det.querySelector('.mes_reasoning');
         rEl.innerHTML = r.html;
         const secs = mes.extra?.reasoning_duration ? ` for ${Math.round(mes.extra.reasoning_duration / 1000)}s` : '';
@@ -637,14 +638,18 @@ async function runInterceptors(type, abortController) {
 
 export async function sendMessage(text, { generateAfter = true } = {}) {
     if (!state.character || state.generating) return;
-    const raw = String(text ?? '');
+    let raw = String(text ?? '');
+    // ST's "Send if empty": an empty send after the character's turn posts this as your message.
+    const ifEmpty = state.preset?.behavior?.sendIfEmpty;
+    const lastVisible = state.chat.findLast(m => !m.is_system);
+    if (!raw.trim() && generateAfter && ifEmpty?.trim() && lastVisible && !lastVisible.is_user) raw = ifEmpty;
     if (raw.trim()) {
         const mes = {
             name: userName(),
             is_user: true,
             is_system: false,
             send_date: nowDate(),
-            mes: applyRegex(substituteParams(raw), REGEX_PLACEMENT.USER_INPUT),
+            mes: substituteParams(applyRegex(raw, REGEX_PLACEMENT.USER_INPUT)),
             extra: {},
             force_avatar: currentPersona().avatar || undefined,
         };
@@ -662,7 +667,7 @@ export async function sendMessage(text, { generateAfter = true } = {}) {
 /**
  * @param {'normal'|'swipe'|'regenerate'|'continue'|'impersonate'|'quiet'} type
  */
-export async function generate(type = 'normal', { quietPrompt = '', quietToLoud = false } = {}) {
+export async function generate(type = 'normal', { quietPrompt = '', quietToLoud = false, skipWIAN = false, responseLength = 0 } = {}) {
     if (!state.character) {
         toast('Pick a character first', 'warning');
         return;
@@ -704,14 +709,15 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             targetId = state.chat.length - 1;
             target = state.chat[targetId];
             if (!target || target.is_system) { type = 'normal'; target = null; }
-            else prefixText = target.mes;
+            // ST's continue postfix (space / newline) goes between the old text and the new.
+            else prefixText = target.mes + (/\s$/.test(target.mes || '') ? '' : (state.preset.completion.continuePostfix ?? ' '));
         }
 
-        const built = await buildPrompt({ type, quietPrompt, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
+        const built = await buildPrompt({ type, quietPrompt, skipWIAN, maxTokens: responseLength || undefined, chat: type === 'swipe' || type === 'regenerate' ? state.chat.slice(0, -1) : state.chat });
         const { messages, prefill, extraParams } = built;
         if (controller.signal.aborted) throw new DOMException('Stopped', 'AbortError');
         const requestId = newRequestId();
-        const body = { ...connectionBody(), messages, params: { ...samplerParams(), ...extraParams }, requestId };
+        const body = { ...connectionBody(), messages, params: { ...samplerParams(), ...(responseLength ? { max_tokens: responseLength } : {}), ...extraParams }, requestId };
         const capture = {
             type, requestId, messages, labels: built.labels, breakdown: built.breakdown, tokens: built.tokens, lore: built.lore,
             loreTotal: built.loreTotal, cut: built.cut, model: body.model, connection: connectionLabel(), body: { ...body, requestId: undefined },
@@ -729,7 +735,7 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
             if (stream) {
                 await streamCompletion(body, { signal: controller.signal, onText: t => { text += t; ta.value = text; autoGrow(); } });
             } else text += (await completion(body, { signal: controller.signal })).text;
-            ta.value = splitReasoning(text, { startsInside: endsInsideThinking(prefill) }).text.trim();
+            ta.value = applyRegex(splitReasoning(text, { startsInside: endsInsideThinking(prefill) }).text.trim(), REGEX_PLACEMENT.USER_INPUT);
             autoGrow();
             await eventSource.emit(event_types.IMPERSONATE_READY, ta.value);
             return ta.value;
@@ -918,9 +924,10 @@ function trimIncomplete(text) {
 }
 
 /** ST-compatible quiet generation (used by extensions & image prompt writing). */
-export async function generateQuietPrompt(quietPrompt = '', quietToLoud = false) {
-    if (typeof quietPrompt === 'object' && quietPrompt) quietPrompt = quietPrompt.quietPrompt ?? '';
-    return generate('quiet', { quietPrompt, quietToLoud });
+export async function generateQuietPrompt(quietPrompt = '', quietToLoud = false, skipWIAN = false, _quietImage, _quietName, responseLength = 0) {
+    // ST also takes one options object: { quietPrompt, quietToLoud, skipWIAN, responseLength, ... }
+    if (typeof quietPrompt === 'object' && quietPrompt) ({ quietPrompt = '', quietToLoud = false, skipWIAN = false, responseLength = 0 } = quietPrompt);
+    return generate('quiet', { quietPrompt, quietToLoud, skipWIAN, responseLength: Number(responseLength) || 0 });
 }
 
 /** ST-compatible raw generation: a plain prompt (string or messages) without the preset. */
@@ -940,8 +947,9 @@ export function autoGrow() {
     ta.style.height = `${Math.min(ta.scrollHeight, window.innerHeight * 0.4)}px`;
 }
 
+/** /sys and /narrator: a narrator line that's part of the story (sent to the model as a system message, as in ST). */
 export function sendSystemMessage(text, { name = 'System' } = {}) {
-    const mes = { name, is_user: false, is_system: true, send_date: nowDate(), mes: String(text), extra: { type: 'narrator' }, force_avatar: 'icons/icon.svg' };
+    const mes = { name, is_user: false, is_system: false, send_date: nowDate(), mes: applyRegex(String(text), REGEX_PLACEMENT.SLASH_COMMAND), extra: { type: 'narrator' }, force_avatar: 'icons/icon.svg' };
     state.chat.push(mes);
     addOneMessage(mes);
     saveChatDebounced();

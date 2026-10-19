@@ -79,6 +79,7 @@ export async function showRecap({ force = false, fresh = false } = {}) {
     const messages = story();
     if (!force) {
         if (state.settings.appearance.recap === false || messages.length < MIN_MESSAGES) return;
+        if (state.character.card?.data?.extensions?.reverie?.assistant) return; // not a story
         const last = lastActivity();
         if (!Number.isFinite(last) || Date.now() - last < AWAY_MS) return;
     }
