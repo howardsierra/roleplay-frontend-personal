@@ -88,7 +88,7 @@ async function editScript(scope, index) {
             field('Min depth', (() => { const i = el('input', { class: 'input', type: 'number', min: -1 }); i.value = s.minDepth ?? ''; i.addEventListener('input', () => { s.minDepth = i.value === '' ? null : Number(i.value); }); return i; })()),
             field('Max depth', (() => { const i = el('input', { class: 'input', type: 'number', min: -1 }); i.value = s.maxDepth ?? ''; i.addEventListener('input', () => { s.maxDepth = i.value === '' ? null : Number(i.value); }); return i; })()),
             field('Macros in regex', select([[0, "Don't substitute"], [1, 'Raw'], [2, 'Escaped']], s.substituteRegex ?? 0, v => { s.substituteRegex = Number(v); }))),
-        toggle('Run on edit', s.runOnEdit !== false, v => { s.runOnEdit = v; }),
+        toggle('Run on edit', !!s.runOnEdit, v => { s.runOnEdit = v; }),
         field('Test', testIn), testOut);
     const result = await modal({ title: 'Regex script', content, wide: true, buttons: [{ label: 'Delete', value: 'delete', danger: true }, { label: 'Cancel', value: null }, { label: 'Save', value: 'save', primary: true }] });
     if (result === 'delete') {

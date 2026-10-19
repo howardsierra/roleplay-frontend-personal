@@ -3,7 +3,7 @@ import { state, saveSettingsDebounced, saveChat, saveChatDebounced, charName, us
 import { streamCompletion, completion } from './api.js';
 import { eventSource, event_types } from './events.js';
 import { buildPrompt, samplerParams } from './prompt.js';
-import { substituteParams } from './macros.js';
+import { substituteParams, parseSendDate } from './macros.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { splitReasoning, endsInsideThinking, stripReasoning, modelStartsInside, learnStartsInside } from './reasoning.js';
 import { createStreamPainter } from './stream-view.js';
@@ -34,8 +34,9 @@ export function avatarFor(mes) {
 
 function formatTime(date) {
     if (!date) return '';
-    const d = new Date(date);
-    if (Number.isNaN(d.getTime())) return String(date);
+    // ST chats carry older date formats too ("September 3, 2023 4:21pm", "2023-09-03@16h21m05s").
+    const d = parseSendDate(date);
+    if (!d || Number.isNaN(d.getTime())) return String(date);
     return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 

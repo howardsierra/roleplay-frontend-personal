@@ -25,16 +25,22 @@ export function newScript(partial = {}) {
 }
 
 export function parseRegex(input) {
-    const m = String(input).match(/^\/([\s\S]+)\/([dgimsuyv]*)$/);
+    const src = String(input);
+    const m = src.match(/^\/([\s\S]+)\/([a-z]*)$/i);
     try {
-        return m ? new RegExp(m[1], m[2]) : new RegExp(String(input));
+        if (!m) return new RegExp(src);
+        // ST accepts PCRE-style flags (x, X, U, A, J…): keep the ones JS knows, once each, and drop the rest.
+        const flags = [...new Set(m[2])].filter(f => 'dgimsuyv'.includes(f)).filter(f => f !== 'v' || !m[2].includes('u')).join('');
+        return new RegExp(m[1], flags);
     } catch {
-        return null;
+        // Like ST's regexFromString: a pattern that won't compile with its flags is tried as one whole string.
+        try { return new RegExp(src); } catch { return null; }
     }
 }
 
+// ST's sanitizeRegexMacro: a macro's value used inside a pattern matches itself literally.
 function escapeRx(s) {
-    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return String(s).replace(/[\n\r\t\v\f\0.^$*+?{}[\]\\/|()]/g, c => ({ '\n': '\\n', '\r': '\\r', '\t': '\\t', '\v': '\\v', '\f': '\\f', '\0': '\\0' })[c] ?? `\\${c}`);
 }
 
 export function allScripts() {
@@ -51,20 +57,20 @@ export function runScript(script, text) {
     if (!text) return text;
     let pattern = script.findRegex;
     if (Number(script.substituteRegex) === SUBSTITUTE.RAW) pattern = substituteParams(pattern);
-    else if (Number(script.substituteRegex) === SUBSTITUTE.ESCAPED) pattern = pattern.replace(/\{\{[\s\S]*?\}\}/g, m => escapeRx(substituteParams(m)));
+    else if (Number(script.substituteRegex) === SUBSTITUTE.ESCAPED) pattern = substituteParams(pattern, {}, { sanitize: escapeRx });
     const rx = parseRegex(pattern);
     if (!rx) return text;
+    const trims = (script.trimStrings || []).map(t => substituteParams(t)).filter(Boolean);
     return text.replace(rx, (...args) => {
         const hasGroups = typeof args.at(-1) === 'object';
         const groups = args.slice(0, hasGroups ? -3 : -2);
-        let match = groups[0];
-        for (const trim of script.trimStrings || []) match = match.split(substituteParams(trim)).join('');
         let out = String(script.replaceString ?? '').replace(/\{\{match\}\}/gi, '$0');
+        // Every substituted capture ($0, $1, $<name>) has the trim strings removed, as in ST.
         out = out.replace(/\$(\d+)|\$<([^>]+)>/g, (_, idx, name) => {
-            if (name) return (hasGroups ? args.at(-1)?.[name] : '') ?? '';
-            const i = Number(idx);
-            if (i === 0) return match;
-            return groups[i] ?? '';
+            let value = name ? (hasGroups ? args.at(-1)?.[name] : '') : groups[Number(idx)];
+            if (!value) return '';
+            for (const trim of trims) value = value.split(trim).join('');
+            return value;
         });
         return substituteParams(out);
     });
@@ -85,11 +91,12 @@ export function applyRegex(text, placement, { isMarkdown = false, isPrompt = fal
         if (script.markdownOnly || script.promptOnly) {
             if (!((script.markdownOnly && isMarkdown) || (script.promptOnly && isPrompt))) continue;
         } else if (isMarkdown || isPrompt) continue;
-        if (isEdit && script.runOnEdit === false) continue;
-        if (depth !== undefined && depth !== null) {
-            const min = script.minDepth ?? -1;
-            const max = script.maxDepth ?? -1;
-            if (min >= 0 && depth < min) continue;
+        if (isEdit && !script.runOnEdit) continue;
+        if (typeof depth === 'number') {
+            // ST: minDepth -1 is meaningful (a continued reply sits at depth -1); maxDepth starts at 0.
+            const min = script.minDepth === null || script.minDepth === '' ? NaN : Number(script.minDepth);
+            const max = script.maxDepth === null || script.maxDepth === '' ? NaN : Number(script.maxDepth);
+            if (min >= -1 && depth < min) continue;
             if (max >= 0 && depth > max) continue;
         }
         out = runScript(script, out);
