@@ -8,7 +8,7 @@ import { points } from './rv-ext/points.js';
 import { applyRegex, REGEX_PLACEMENT } from './regex.js';
 import { stripReasoning, reasoningSettings } from './reasoning.js';
 import { scanWorldInfo } from './worldinfo.js';
-import { recallMemories, memoryReserve, noteMemoryUse } from './memory.js';
+import { recallMemories, memoryReserve, memoryFloor, noteMemoryUse } from './memory.js';
 import { eventSource, event_types } from './events.js';
 import { STRUCTURAL_MARKERS, MARKER_NAMES, makeBlock } from './presets.js';
 
@@ -462,7 +462,8 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     let budget = contextSize - reserve - fixedTokens;
     // Room for memories of what no longer fits (taken from the history's share).
     const historyTokens = historyMsgs.reduce((n, m) => n + estimateTokens(m.content) + 4, 0);
-    const memReserve = historyTokens > budget ? Math.min(memoryReserve(), Math.max(0, Math.floor(budget / 3))) : 0;
+    // Pinned / hand-added memories and the synopsis always get a small floor; the rest only when history overflows.
+    const memReserve = Math.min(historyTokens > budget ? memoryReserve() : memoryFloor(), Math.max(0, Math.floor(budget / 3)));
     budget -= memReserve;
     const kept = [];
     for (let i = historyMsgs.length - 1; i >= 0; i--) {
@@ -515,7 +516,9 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     const historyBlock = [];
     const newChat = substituteParams(preset.behavior.newChatPrompt ?? '');
-    if (mem.text) {
+    // A preset that places {{memories}} itself gets them there instead.
+    const memoriesInPreset = preset.blocks.some(b => b.enabled && /\{\{\s*memories(?:raw)?\s*\}\}/i.test(b.content || ''));
+    if (mem.text && !memoriesInPreset) {
         historyBlock.push({ role: 'system', content: mem.text, __label: `Memories (${mem.used.length})` });
         breakdown.push({ label: `Memories (${mem.used.length})`, role: 'system', tokens: mem.tokens });
     }

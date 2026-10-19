@@ -1767,3 +1767,17 @@ body.rv-prose-hold .mes.last_mes:not(.user_mes) .mes_block::after { content: 'âœ
 .memory-keys, .insp-keys { display: flex; flex-wrap: wrap; gap: 4px; }
 .memory-keys .tag { font-size: .75em; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--rv-accent) 14%, transparent); }
 .memory-settings summary { cursor: pointer; font-size: .85em; color: var(--rv-text-dim); padding: 4px 0; }
+
+/* Memory book: the story-so-far synopsis; Story tab: a model per agent */
+.memory-synopsis { border-radius: 12px; background: var(--rv-surface); border: 1px solid color-mix(in srgb, var(--rv-accent) 30%, transparent); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: .9em; }
+.memory-synopsis.off { opacity: .55; }
+.memory-synopsis-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.memory-synopsis-head b i { color: var(--rv-accent); }
+.memory-synopsis-head .memory-meta { margin-left: auto; display: flex; gap: 6px; align-items: baseline; }
+.agent-models summary { cursor: pointer; font-weight: 600; font-size: .95em; list-style: none; }
+.agent-models summary::-webkit-details-marker { display: none; }
+.agent-models summary i { color: var(--rv-accent); }
+.agent-models-list { display: flex; flex-direction: column; gap: 6px; }
+.agent-model-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.agent-model-row > span { flex: 1 1 140px; display: flex; align-items: center; gap: 6px; font-size: .9em; }
+.agent-model-row select { flex: 1 1 160px; min-width: 0; }

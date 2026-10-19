@@ -147,7 +147,8 @@ function entryCard(world, key, e, refresh) {
             field('Role (@depth)', select([[0, 'System'], [1, 'User'], [2, 'Assistant']], e.role, v => { e.role = Number(v); }))),
         el('div', { class: 'row gap wrap' },
             toggle('Always on', e.constant, v => { e.constant = v; }),
-            toggle('No recursion', e.preventRecursion, v => { e.preventRecursion = v; })),
+            toggle('No recursion', e.preventRecursion, v => { e.preventRecursion = v; }),
+            toggle('Locked', !!e.locked, v => { e.locked = v; }, 'The Lorebook Keeper agent won\'t change it.')),
         advanced(e),
         el('button', { class: 'btn small danger', onclick: () => { delete world.entries[key]; refresh(); } }, icon('trash-can'), 'Delete entry'));
     const det = el('details', { class: `entry-card${e.disable ? ' off' : ''}` },

@@ -2,9 +2,9 @@
 // the Push story button and the status chip.
 import { state } from '../state.js';
 import { eventSource, event_types } from '../events.js';
-import { el, icon, toast, toggle } from '../ui.js';
+import { el, icon, toast, toggle, select } from '../ui.js';
 import { points, pointsChanged } from '../rv-ext/points.js';
-import { agents, isOn, setOn, agentsOff, chatAgents, agentStore, agentConfig, runNow } from './core.js';
+import { agents, isOn, setOn, agentsOff, chatAgents, agentStore, agentConfig, agentSettings, saveAgentSettings, runNow } from './core.js';
 import {
     pushStory, formatPlot, applyContinuity, trackerState, trackerLocks, editTrackers, TRACKER_SECTIONS,
     acceptLore, dismissLore,
@@ -32,6 +32,7 @@ function renderStory(container) {
         isOn('trackers') || trackerState().state ? trackersCard() : null,
         isOn('plot') ? plotCard() : null,
         (agentStore('lorekeeper').pending || []).length ? loreCard() : null,
+        anyOn ? modelsCard() : null,
         !anyOn ? el('p', { class: 'hint' }, 'Switch agents on above. Each one is a small helper AI that runs around your replies — they use your chat model, or a cheaper one picked in Agent settings.') : null));
 }
 const refresh = () => { if (storyBox?.isConnected) renderStory(storyBox); syncComposer(); };
@@ -120,14 +121,42 @@ function trackersCard() {
         ...sections);
 }
 
+/**
+ * A select for the model one agent uses: a connection profile, or the agents' own setting. Exported for the
+ * Settings → Agents panel too.
+ */
+export function agentConnectionSelect(id, onChange) {
+    const profiles = state.settings.connection.profiles || [];
+    const cfg = agentConfig(id);
+    const fallback = agentSettings().connection;
+    return select([['', `Default (${fallback || 'same as the chat'})`], ...profiles.map(p => [p.name, `${p.name} (${p.model})`])], cfg.connection || '', v => {
+        cfg.connection = v;
+        saveAgentSettings();
+        onChange?.(v);
+    }, { title: 'Model for this agent' });
+}
+
+/** Which model each agent that's on uses (a setting for all stories). */
+function modelsCard() {
+    if (!(state.settings.connection.profiles || []).length) return null;
+    const on = ordered().filter(def => isOn(def.id));
+    const custom = on.filter(def => agentConfig(def.id).connection).length;
+    return el('details', { class: 'agent-card agent-models' },
+        el('summary', {}, icon('microchip'), ` Models${custom ? ` (${custom} custom)` : ''}`),
+        el('p', { class: 'hint' }, 'Give an agent its own model (a connection profile). Applies to all stories.'),
+        el('div', { class: 'agent-models-list' }, on.map(def => el('label', { class: 'agent-model-row' },
+            el('span', {}, icon(def.icon), def.name), agentConnectionSelect(def.id)))));
+}
+
 function loreCard() {
     const pending = agentStore('lorekeeper').pending || [];
     return card(`Lorebook suggestions (${pending.length})`, 'book-bookmark', pending.map(e => {
-        const content = el('textarea', { class: 'input', rows: 3 });
+        const content = el('textarea', { class: 'input', rows: 3, placeholder: e.mode === 'append' ? 'New facts to add' : '' });
         content.value = e.content;
         const keys = el('input', { class: 'input', value: e.keys.join(', ') });
+        const what = !e.update ? 'new' : e.mode === 'append' ? `adds to “${e.update}”` : `rewrites “${e.update}”`;
         return el('div', { class: 'lore-suggestion' },
-            el('div', { class: 'row gap' }, el('b', {}, e.title), e.update ? el('span', { class: 'hint' }, `updates “${e.update}”`) : el('span', { class: 'hint' }, 'new')),
+            el('div', { class: 'row gap' }, el('b', {}, e.title), el('span', { class: 'hint' }, what, e.bookName ? ` in ${e.bookName}` : '')),
             el('label', { class: 'field' }, el('span', { class: 'field-label' }, 'Keywords'), keys), content,
             el('div', { class: 'row gap' },
                 el('button', { class: 'btn small primary', onclick: async () => {
@@ -173,7 +202,12 @@ async function decorate(node, mes, id, { streaming }) {
             choices.map(c => el('div', { class: 'cyoa-choice' },
                 el('button', { class: 'cyoa-main', onclick: () => send(c) }, c),
                 el('button', { class: 'icon-btn small', title: 'Edit before sending', onclick: () => fill(c) }, icon('pen')))),
-            el('button', { class: 'cyoa-reroll', title: 'New choices', onclick: () => runNow('cyoa') }, icon('rotate'), 'Other choices')));
+            el('button', { class: 'cyoa-reroll', title: 'New choices', onclick: async ev => {
+                const btn = ev.currentTarget;
+                btn.disabled = true;
+                btn.querySelector('i')?.classList.add('fa-spin');
+                try { await runNow('cyoa', { reroll: true }); } finally { if (btn.isConnected) { btn.disabled = false; btn.querySelector('i')?.classList.remove('fa-spin'); } }
+            } }, icon('rotate'), 'Other choices')));
     }
     if (!parts.length) return;
     const box = el('div', { class: 'rv-agent-extras' }, ...parts);

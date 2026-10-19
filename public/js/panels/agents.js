@@ -3,6 +3,7 @@ import { state } from '../state.js';
 import { el, icon, field, select, textArea, textInput, toggle, section, slider } from '../ui.js';
 import { agents, agentSettings, agentConfig, saveAgentSettings } from '../agents/core.js';
 import { TRACKER_SECTIONS, ECHO_STYLES } from '../agents/builtin.js';
+import { agentConnectionSelect } from '../agents/ui.js';
 
 const ORDER = ['director', 'plot', 'prose', 'continuity', 'trackers', 'cyoa', 'lorekeeper', 'echo'];
 
@@ -13,7 +14,8 @@ export async function render(body) {
     body.append(section('How agents run',
         el('p', { class: 'hint' }, 'Agents are small helper AIs that run around your replies. Switch them on per story in the character sheet’s Story tab; the switches below decide what new stories start with.'),
         field('Model for agents', select([['', 'Same as the chat'], ...profiles.map(p => [p.name, `${p.name} (${p.model})`])], s.connection, v => { s.connection = v; save(); }),
-            profiles.length ? 'A cheaper, faster model works well for most agents.' : 'Save a connection profile (Settings → Connection → Profiles) to give agents their own model.')));
+            profiles.length ? 'A cheaper, faster model works well for most agents.' : 'Save a connection profile (Settings → Connection → Profiles) to give agents their own model.'),
+        toggle('Give agents the full story context', s.richBrief !== false, v => { s.richBrief = v; save(); }, 'The whole card, persona, active lore, memories and tracker state. Better judgement; a few more tokens per agent call.')));
 
     for (const id of ORDER) {
         const def = agents.get(id);
@@ -56,6 +58,7 @@ export async function render(body) {
         body.append(section('',
             el('div', { class: 'agent-setting-head' }, el('span', { class: 'agent-setting-icon' }, icon(def.icon)), el('div', {}, el('b', {}, def.name), el('p', { class: 'hint' }, def.description))),
             toggle('On in new stories', !!s.defaults[id], v => { s.defaults[id] = v; save(); }),
+            profiles.length ? field('Model', agentConnectionSelect(id, save)) : null,
             ...opts));
     }
 }
