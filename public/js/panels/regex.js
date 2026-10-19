@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { state, saveSettingsDebounced } from '../state.js';
-import { newScript, parseRegex, runScript, REGEX_PLACEMENT } from '../regex.js';
+import { newScript, parseRegex, runScript, REGEX_PLACEMENT, regexPermission, setRegexPermission } from '../regex.js';
 import { savePresetDebounced } from '../preset-store.js';
 import { printMessages } from '../chat.js';
 import { el, icon, field, select, textInput, textArea, toggle, section, toast, modal, pickFile, download, confirmDialog } from '../ui.js';
@@ -12,7 +12,7 @@ export async function render(body) {
     rootBody = body;
     const scopes = [
         { key: 'global', label: 'Global scripts', list: state.settings.regex, save: () => saveSettingsDebounced() },
-        { key: 'preset', label: `Preset scripts · ${state.preset?.name || ''}`, list: state.preset.regex, save: () => savePresetDebounced() },
+        { key: 'preset', label: `Preset scripts · ${state.preset?.name || ''}`, list: state.preset.regex, save: () => savePresetDebounced(), owner: state.preset?.id },
     ];
     if (state.character) {
         const ext = state.character.card.data.extensions ??= {};
@@ -20,9 +20,9 @@ export async function render(body) {
         scopes.push({
             key: 'character', label: `Character scripts · ${state.character.card.data.name}`, list: ext.regex_scripts,
             save: () => api.put(`characters/${encodeURIComponent(state.character.id)}`, { extensions: { regex_scripts: ext.regex_scripts } }),
+            owner: state.character.id,
         });
     }
-    body.append(section('', toggle('Allow character-scoped scripts', state.settings.allowCharacterRegex, v => { state.settings.allowCharacterRegex = v; saveSettingsDebounced(); printMessages(); }, 'Cards often ship regex that turns tags into styled HTML panels.')));
     for (const scope of scopes) {
         const rows = scope.list.map((s, i) => {
             const sw = el('input', { type: 'checkbox', class: 'switch-input' });
@@ -34,9 +34,19 @@ export async function render(body) {
                     el('span', { class: 'hint mono ellipsis' }, s.findRegex)),
                 el('label', { class: 'switch small' }, sw, el('span', { class: 'switch-track' })));
         });
-        body.append(section(scope.label,
+        // Scripts bundled with a card or preset only run with your permission (asked when it's first opened).
+        const permission = scope.owner && scope.list.length ? (() => {
+            const now = regexPermission(scope.key, scope.owner);
+            return toggle(scope.key === 'preset' ? 'Allow this preset\'s scripts to run' : 'Allow this character\'s scripts to run', now === 'allowed', v => { setRegexPermission(scope.key, scope.owner, v); printMessages(); },
+                now === 'ask' ? 'Not decided yet — they stay off until you allow them.' : 'Cards and presets often use regex to turn tags into styled panels.');
+        })() : null;
+        body.append(section(scope.label, permission,
             el('div', { class: 'row gap wrap' },
-                el('button', { class: 'btn small', onclick: async () => { scope.list.push(newScript()); await scope.save(); editScript(scope, scope.list.length - 1); } }, icon('plus'), 'New'),
+                el('button', { class: 'btn small', onclick: async () => {
+                    // Scripts you write yourself for a card or preset are allowed, obviously.
+                    if (scope.owner) setRegexPermission(scope.key, scope.owner, true);
+                    scope.list.push(newScript()); await scope.save(); editScript(scope, scope.list.length - 1);
+                } }, icon('plus'), 'New'),
                 el('button', { class: 'btn small', onclick: async () => {
                     const files = await pickFile('.json,application/json', { multiple: true });
                     for (const file of files || []) {
@@ -44,6 +54,7 @@ export async function render(body) {
                             const json = JSON.parse(await file.text());
                             const arr = Array.isArray(json) ? json : (Array.isArray(json.regex_scripts) ? json.regex_scripts : [json]);
                             for (const s of arr) scope.list.push(newScript({ ...s, id: s.id || crypto.randomUUID() }));
+                            if (scope.owner && arr.length) setRegexPermission(scope.key, scope.owner, true);
                             toast(`Imported ${arr.length} script(s)`, 'success');
                         } catch (err) { toast(`${file.name}: ${err.message}`, 'error'); }
                     }

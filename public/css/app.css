@@ -1781,3 +1781,5 @@ body.rv-prose-hold .mes.last_mes:not(.user_mes) .mes_block::after { content: 'âœ
 .agent-model-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .agent-model-row > span { flex: 1 1 140px; display: flex; align-items: center; gap: 6px; font-size: .9em; }
 .agent-model-row select { flex: 1 1 160px; min-width: 0; }
+.regex-consent-list { margin: 0; padding-left: 1.1em; font-size: .9em; max-height: 220px; overflow-y: auto; }
+.regex-consent-list code { color: var(--rv-text-dim); font-size: .85em; word-break: break-all; }

@@ -129,6 +129,9 @@ export async function openCharacter(id, { chatId, fresh = false } = {}) {
     saveSettingsDebounced();
     renderLibrary();
     applyTheme();
+    // A card that brings its own regex scripts asks before they run (like SillyTavern).
+    const { askRegexPermission, characterScripts } = await import('./regex.js');
+    if (await askRegexPermission('character', { id, name: character.card.data.name, scripts: characterScripts(character) }) && state.character?.id === id) printMessages();
 }
 
 export function updateHeader() {

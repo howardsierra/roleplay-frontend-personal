@@ -14,7 +14,6 @@ export const DEFAULT_SETTINGS = {
     personaId: null,
     worlds: { active: [], scanDepth: 2, budgetPercent: 25, budgetCap: 0, recursive: true, includeNames: true, characterStrategy: 1, maxRecursionSteps: 0, minActivations: 0, minActivationsDepthMax: 0 },
     regex: [],
-    allowCharacterRegex: true,
     image: {
         provider: 'pollinations',
         model: '',

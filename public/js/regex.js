@@ -43,13 +43,66 @@ function escapeRx(s) {
     return String(s).replace(/[\n\r\t\v\f\0.^$*+?{}[\]\\/|()]/g, c => ({ '\n': '\\n', '\r': '\\r', '\t': '\\t', '\v': '\\v', '\f': '\\f', '\0': '\\0' })[c] ?? `\\${c}`);
 }
 
+// ---------------------------------------------------------------- permission (ST's allowed-regex lists)
+// Scripts that come inside a character card or a preset only run once you've allowed them for that card or
+// preset; you're asked the first time one is opened. Your global scripts always run.
+export function regexConsent() {
+    state.settings.regexConsent ??= { characters: {}, presets: {} };
+    state.settings.regexConsent.characters ??= {};
+    state.settings.regexConsent.presets ??= {};
+    return state.settings.regexConsent;
+}
+const usable = list => (Array.isArray(list) ? list.filter(s => s && s.findRegex) : []);
+export const characterScripts = (character = state.character) => usable(character?.card?.data?.extensions?.regex_scripts);
+export const presetScripts = (preset = state.preset) => usable(preset?.regex);
+
+/** 'allowed' | 'blocked' | 'ask' for the current character's or preset's own scripts. */
+export function regexPermission(kind, id) {
+    const v = regexConsent()[kind === 'preset' ? 'presets' : 'characters'][id];
+    return v === true ? 'allowed' : v === false ? 'blocked' : 'ask';
+}
+export function setRegexPermission(kind, id, allowed) {
+    regexConsent()[kind === 'preset' ? 'presets' : 'characters'][id] = !!allowed;
+    import('./state.js').then(m => m.saveSettingsDebounced());
+}
+
+const asking = new Set();
+/**
+ * Asks once whether a character's (or preset's) bundled regex scripts may run. Resolves true when they may.
+ * @param {'character'|'preset'} kind
+ */
+export async function askRegexPermission(kind, { id, name, scripts }) {
+    if (!id || !scripts?.length) return false;
+    const now = regexPermission(kind, id);
+    if (now !== 'ask') return now === 'allowed';
+    if (asking.has(`${kind}:${id}`)) return false;
+    asking.add(`${kind}:${id}`);
+    try {
+        const { el, modal } = await import('./ui.js');
+        const what = kind === 'preset' ? `The preset “${name}”` : `The character “${name}”`;
+        const allowed = await modal({
+            title: 'Allow regex scripts?',
+            content: el('div', { class: 'stack' },
+                el('p', {}, `${what} comes with ${scripts.length} regex script${scripts.length === 1 ? '' : 's'}. They can change how messages look, what's sent to the AI and what's saved in the chat.`),
+                el('ul', { class: 'regex-consent-list' }, scripts.slice(0, 12).map(s => el('li', {}, el('b', {}, s.scriptName || 'Untitled'), el('code', {}, ` ${String(s.findRegex).slice(0, 80)}`)))),
+                scripts.length > 12 ? el('p', { class: 'hint' }, `…and ${scripts.length - 12} more.`) : null,
+                el('p', { class: 'hint' }, 'You can change this later in Settings → Regex.')),
+            buttons: [{ label: 'Don\'t allow', value: false }, { label: 'Allow', value: true, primary: true, icon: 'check' }],
+            dismissable: false,
+        });
+        // Closing the box decides nothing: you'll be asked again next time.
+        if (allowed === null || allowed === undefined) return false;
+        setRegexPermission(kind, id, !!allowed);
+        return !!allowed;
+    } finally {
+        asking.delete(`${kind}:${id}`);
+    }
+}
+
 export function allScripts() {
     const scripts = [...(state.settings.regex || [])];
-    if (state.preset?.regex?.length) scripts.push(...state.preset.regex);
-    if (state.settings.allowCharacterRegex) {
-        const own = state.character?.card?.data?.extensions?.regex_scripts;
-        if (Array.isArray(own)) scripts.push(...own);
-    }
+    if (state.preset?.id && regexPermission('preset', state.preset.id) === 'allowed') scripts.push(...presetScripts());
+    if (state.character?.id && regexPermission('character', state.character.id) === 'allowed') scripts.push(...characterScripts());
     return scripts.filter(s => s && !s.disabled && s.findRegex);
 }
 
