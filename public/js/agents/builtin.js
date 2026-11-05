@@ -286,6 +286,144 @@ export async function editTrackers(fn) {
     eventSource.emit('rv_story_changed');
 }
 
+// ================================================================ Bonds & secrets
+// The model only reports what happened (a warm moment, a slight, an insult…) as yes/no; Reverie does the
+// arithmetic, so a bond moves the same way every time and can't jump on a whim. Bonds unlock milestones in order.
+// It also keeps each character's current goal (as steps) and notes: rules, open threads, and secrets with who
+// knows and who doesn't.
+export const DEFAULT_MILESTONES = '2 hug, 5 holding hands, 8 kiss, 12 intimacy';
+export const BOND_RANGE = [-10, 20];
+const MOMENTS = ['warm', 'slight', 'insult', 'betrayal', 'apology'];
+const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number(v) || 0)));
+
+/** "2 hug, 5 holding hands" → [{ at: 2, name: 'hug' }, …], lowest first. */
+export function parseMilestones(text = DEFAULT_MILESTONES) {
+    return String(text || '').split(/[,\n]/).map(s => s.trim().match(/^(-?\d+)\s+(.+)$/)).filter(Boolean)
+        .map(m => ({ at: Number(m[1]), name: m[2].trim() })).sort((a, b) => a.at - b.at);
+}
+/** What a bond allows: the highest milestone reached and the next one. */
+export function milestoneFor(bond, milestones = parseMilestones(agentConfig('bonds').milestones)) {
+    const reached = milestones.filter(m => bond >= m.at);
+    return { reached: reached.at(-1) || null, next: milestones.find(m => bond < m.at) || null };
+}
+
+/**
+ * One turn of bond arithmetic. warmth builds up from warm moments and turns into a point of bond; grudges build
+ * from slights and cost a point; insults and betrayals hit at once; an apology clears the grudge. Warmth fades
+ * slowly when nothing warm happens.
+ */
+export function stepBond(prev = {}, moment = {}, turn = 1) {
+    const b = { bond: clampInt(prev.bond, ...BOND_RANGE), warmth: clampInt(prev.warmth, 0, 99), grudge: clampInt(prev.grudge, 0, 99), quiet: clampInt(prev.quiet, 0, 99) };
+    if (moment.warm) { b.warmth += 1; b.quiet = 0; } else b.quiet += 1;
+    if (moment.slight) b.grudge += 1;
+    if (moment.insult) b.bond -= 1;
+    if (moment.betrayal) { b.bond -= 3; b.warmth = 0; }
+    if (moment.apology) b.grudge = 0;
+    if (b.warmth >= 5) { if (b.grudge < 3) b.bond += 1; b.warmth = 0; }
+    if (b.grudge >= 4) { b.bond -= 1; b.grudge = 0; }
+    if (b.quiet >= 6 && b.warmth > 0) { b.warmth -= 1; b.quiet = 0; }
+    b.bond = clampInt(b.bond, ...BOND_RANGE);
+    b.turn = turn;
+    return b;
+}
+
+/** The newest bonds snapshot at or before message index upTo (it rides on that reply's swipe). */
+export function bondsState(upTo = state.chat.length) {
+    for (let i = Math.min(upTo, state.chat.length) - 1; i >= 0; i--) {
+        const b = state.chat[i]?.extra?.rv_bonds;
+        if (b) return { state: b, index: i };
+    }
+    return { state: null, index: -1 };
+}
+
+/** Bonds, goals and notes as plain text for the prompt. */
+export function formatBonds(b, cfg = agentConfig('bonds')) {
+    if (!b) return '';
+    const milestones = parseMilestones(cfg.milestones);
+    const lines = [];
+    for (const [name, x] of Object.entries(b.bonds || {})) {
+        const { reached, next } = milestoneFor(x.bond, milestones);
+        lines.push(`- ${name} ↔ ${you()}: bond ${x.bond}${reached ? `; as far as ${reached.name}` : '; no milestone yet'}${next ? `; not yet ${next.name} (needs ${next.at})` : ''}${x.grudge >= 2 ? '; holding a grudge' : ''}`);
+    }
+    const goals = Object.entries(b.goals || {}).map(([name, g]) => `- ${name}: ${g.goal}${g.of > 1 ? ` (step ${g.step} of ${g.of})` : ''}${g.status ? ` — ${g.status}` : ''}`);
+    const notes = (b.notes || []).map(n => `- [${n.type}] ${n.text}${n.type === 'secret' ? `${n.knows?.length ? ` (known to: ${n.knows.join(', ')})` : ''}${n.unaware?.length ? ` (unaware: ${n.unaware.join(', ')})` : ''}` : ''}`);
+    return [
+        lines.length ? `Bonds (characters don't act beyond what their bond allows):\n${lines.join('\n')}` : '',
+        goals.length ? `Current goals:\n${goals.join('\n')}` : '',
+        notes.length ? `Notes (rules to keep, open threads, secrets — characters only know what they know):\n${notes.join('\n')}` : '',
+    ].filter(Boolean).join('\n');
+}
+
+defineAgent({
+    id: 'bonds', name: 'Bonds & Secrets', short: 'Bonds', icon: 'heart-pulse', phase: 'post',
+    description: 'A bond meter for each character toward you that only moves by fixed rules (warm moments, slights, insults, betrayals, apologies) and unlocks milestones in order; plus each character\'s current goal and a list of secrets with who knows and who doesn\'t.',
+    defaults: { every: 1, milestones: DEFAULT_MILESTONES, inject: true },
+    async run(ctx, cfg) {
+        const prev = bondsState(ctx.index).state || {};
+        const out = await callAgentJson([
+            { role: 'system', content: `You keep continuity notes for an ongoing roleplay. You never write story text. Read the current notes and the newest exchange, then reply with JSON only:
+{
+ "moments": { "<character name>": { "warm": bool, "slight": bool, "insult": bool, "betrayal": bool, "apology": bool } },
+ "goals": { "<character name>": { "goal": "what they're after right now", "step": int, "of": int, "status": "where they are with it" } },
+ "notes": [ { "type": "rule" | "thread" | "secret", "text": "...", "knows": ["names"], "unaware": ["names"] } ]
+}
+Rules:
+- moments: only for characters who dealt with ${you()} in the newest exchange, judging only that exchange. "warm" = a genuinely kind, close or fun moment between them; "slight" = minor rudeness or neglect; "insult" = real hurt; "betrayal" = a serious breach of trust; "apology" = a sincere apology. Never give scores.
+- goals: every character with a current aim; keep earlier goals that still stand, update steps, drop finished ones.
+- notes: the complete list, at most 12, most important first. rule = something that must stay true; thread = a promise, deadline or open question; secret = something not everyone knows, with who knows and who doesn't (characters who weren't there don't know).
+- Use the characters' names; "${you()}" is the user's character.
+${UNTRUSTED}` },
+            { role: 'user', content: `${storyBrief({ rich: true, skip: ['bonds'], upTo: ctx.index })}\n\nCurrent notes:\n${JSON.stringify({ goals: prev.goals || {}, notes: prev.notes || [] })}\n\nRecent story (the last message is the newest reply):\n${transcript(6, ctx.index + 1, 2000)}` },
+        ], { temperature: 0.2, agent: 'bonds', check: o => (o && typeof o === 'object' && !Array.isArray(o) ? true : 'expected an object') });
+        const turn = (prev.turn || 0) + 1;
+        const bonds = { ...(prev.bonds || {}) };
+        const locked = agentStore('bonds').locks || {};
+        for (const [name, m] of Object.entries(out.moments || {})) {
+            const n = String(name).trim();
+            if (!n || n === you() || locked[n]) continue;
+            const flags = Object.fromEntries(MOMENTS.map(k => [k, m?.[k] === true]));
+            bonds[n] = { ...stepBond(bonds[n], flags, turn), last: Object.keys(flags).filter(k => flags[k]) };
+        }
+        const goals = {};
+        for (const [name, g] of Object.entries(out.goals || {})) {
+            if (!g?.goal) continue;
+            const of = clampInt(g.of, 1, 99) || 1;
+            goals[String(name).trim()] = { goal: String(g.goal), step: clampInt(g.step, 1, of) || 1, of, status: String(g.status || '') };
+        }
+        const notes = (Array.isArray(out.notes) ? out.notes : []).filter(n => n?.text && ['rule', 'thread', 'secret'].includes(n.type)).slice(0, 12)
+            .map(n => ({ type: n.type, text: String(n.text), ...(n.type === 'secret' ? { knows: (n.knows || []).map(String), unaware: (n.unaware || []).map(String) } : {}) }));
+        // Notes you pinned stay even if the model drops them.
+        const pinned = (prev.notes || []).filter(n => n.pinned && !notes.some(x => x.text === n.text));
+        patchSwipe(ctx.mes, ctx.swipeId, extra => { extra.rv_bonds = { turn, bonds, goals, notes: [...pinned, ...notes], at: Date.now() }; });
+        eventSource.emit('rv_story_changed');
+    },
+    inject(cfg) {
+        if (!cfg?.inject) return [{ key: 'rv_bonds', value: '' }];
+        const text = formatBonds(bondsState().state, cfg);
+        return [{ key: 'rv_bonds', inChat: true, depth: 1, value: text ? `[Relationships and continuity — stay consistent with them]\n${text}` : '' }];
+    },
+    brief(cfg, upTo) {
+        const text = formatBonds(bondsState(upTo).state, cfg);
+        return text ? `Bonds and continuity notes:\n${text}` : '';
+    },
+});
+
+/** Edits to the newest bonds snapshot from the Story tab. */
+export async function editBonds(fn) {
+    let { index } = bondsState();
+    let mes = state.chat[index];
+    if (!mes) {
+        mes = state.chat.findLast(m => !m.is_user && !m.is_system);
+        if (!mes) return;
+    }
+    mes.extra ??= {};
+    const b = mes.extra.rv_bonds ??= { turn: 0, bonds: {}, goals: {}, notes: [] };
+    fn(b);
+    await syncSwipeOf(mes);
+    saveChatDebounced();
+    eventSource.emit('rv_story_changed');
+}
+
 // ================================================================ CYOA choices
 defineAgent({
     id: 'cyoa', name: 'Choices', short: 'Choices', icon: 'signs-post', phase: 'post',

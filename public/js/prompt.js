@@ -470,13 +470,27 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     // Pinned / hand-added memories and the synopsis always get a small floor; the rest only when history overflows.
     const memReserve = Math.min(historyTokens > budget ? memoryReserve() : memoryFloor(), Math.max(0, Math.floor(budget / 3)));
     budget -= memReserve;
-    const kept = [];
-    for (let i = historyMsgs.length - 1; i >= 0; i--) {
-        const t = estimateTokens(historyMsgs[i].content) + 4;
-        if (budget - t < 0 && kept.length) break;
-        budget -= t;
-        kept.unshift(historyMsgs[i]);
-    }
+    const cost = historyMsgs.map(m => estimateTokens(m.content) + 4);
+    const tokensFrom = i => cost.slice(i).reduce((n, t) => n + t, 0);
+    // The oldest message that still fits (the newest always goes in).
+    let start = historyMsgs.length;
+    for (let left = budget; start > 0 && (left - cost[start - 1] >= 0 || start === historyMsgs.length); start--) left -= cost[start - 1];
+    // Cache-friendly: rather than dropping one old message every turn (which changes the start of the chat, so
+    // the provider can't reuse its cached prompt), cut a bigger slice once and keep that cut point until the
+    // chat outgrows it again.
+    const floorIds = historyMsgs.map(m => m.__src.id);
+    if (gen.cacheFriendly !== false && start > 0) {
+        const saved = floorIds.indexOf(meta.rv_history_floor);
+        if (saved >= start && saved < historyMsgs.length - 2) start = saved;
+        else {
+            const slack = Math.min(0.6, Math.max(0, Number(gen.cacheSlack ?? 0.25)));
+            const target = Math.floor(budget * (1 - slack));
+            while (start < historyMsgs.length - 2 && tokensFrom(start) > target) start++;
+            if (!dryRun) meta.rv_history_floor = floorIds[start];
+        }
+    } else if (start === 0 && meta.rv_history_floor && !dryRun) delete meta.rv_history_floor;
+    const kept = historyMsgs.slice(start);
+    budget -= tokensFrom(start);
     const dropped = historyMsgs.length - kept.length;
 
     // Example dialogue fills what's left, one whole example at a time.
@@ -497,6 +511,12 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
     const firstKept = kept.length ? kept[0].__src.index : Infinity;
     const mem = recallMemories({ chat, firstKept: dropped ? firstKept : -1, budget: memReserve });
     if (!dryRun) noteMemoryUse(mem);
+    // A preset that places {{memories}} itself gets them there instead.
+    const memoriesInPreset = preset.blocks.some(b => b.enabled && /\{\{\s*memories(?:raw)?\s*\}\}/i.test(b.content || ''));
+    // Cache-friendly: the memories that stay put open the chat; the ones the last messages brought up go near
+    // the end, so they don't change the start of the prompt every turn.
+    const splitMemories = gen.cacheFriendly !== false && !memoriesInPreset && mem.live;
+    if (splitMemories) inChat.push({ content: mem.live, depth: 2, role: 'system', order: 100, key: '0_memories', label: 'Recalled memories' });
 
     // Depth injections, merged like ST: at each depth, one message per injection order and role (lower
     // order first; within it assistant, user, then system, nearest the bottom). Preset blocks come first,
@@ -521,11 +541,10 @@ export async function buildPrompt({ type = 'normal', quietPrompt = '', chat = st
 
     const historyBlock = [];
     const newChat = substituteParams(preset.behavior.newChatPrompt ?? '');
-    // A preset that places {{memories}} itself gets them there instead.
-    const memoriesInPreset = preset.blocks.some(b => b.enabled && /\{\{\s*memories(?:raw)?\s*\}\}/i.test(b.content || ''));
-    if (mem.text && !memoriesInPreset) {
-        historyBlock.push({ role: 'system', content: mem.text, __label: `Memories (${mem.used.length})` });
-        breakdown.push({ label: `Memories (${mem.used.length})`, role: 'system', tokens: mem.tokens });
+    const memText = splitMemories ? mem.stable : mem.text;
+    if (memText && !memoriesInPreset) {
+        historyBlock.push({ role: 'system', content: memText, __label: `Memories (${mem.used.length})` });
+        breakdown.push({ label: `Memories (${mem.used.length})`, role: 'system', tokens: estimateTokens(memText) });
     }
     if (newChat.trim()) historyBlock.push({ role: 'system', content: newChat, __label: 'New chat prompt', __noSquash: true });
     historyBlock.push(...withInjections);

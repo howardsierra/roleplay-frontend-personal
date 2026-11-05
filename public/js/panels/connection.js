@@ -1,7 +1,8 @@
 import { api } from '../api.js';
 import { state, saveSettingsDebounced, connectionRequest, customEndpoint } from '../state.js';
 import { eventSource, event_types } from '../events.js';
-import { el, icon, field, select, textInput, section, toast, promptDialog, confirmDialog } from '../ui.js';
+import { el, icon, field, select, textInput, section, toast, promptDialog, confirmDialog, debounce } from '../ui.js';
+import { costPanel } from '../pricing.js';
 
 async function providers() {
     state.providers ??= await api.get('providers');
@@ -34,6 +35,10 @@ export async function render(body) {
         if (ep) ep.model = conn.model; // each endpoint remembers its last model
         saveSettingsDebounced(); eventSource.emit(event_types.CHATCOMPLETION_MODEL_CHANGED, conn.model); }, { list: 'model-list', placeholder: 'e.g. anthropic/claude-sonnet-4.5' });
     const modelSelect = el('select', { class: 'input hidden' });
+    // What a message costs with this model (OpenRouter lists prices); refreshed when the model changes.
+    const cost = costPanel();
+    const refreshCost = debounce(() => cost.refresh(), 600);
+    modelInput.addEventListener('input', refreshCost);
     const status = el('div', { class: 'conn-status' });
 
     const setStatus = (kind, text) => {
@@ -49,6 +54,7 @@ export async function render(body) {
             modelSelect.replaceChildren(el('option', { value: '' }, `— ${models.length} models — pick one —`), ...models.map(m => el('option', { value: m.id, selected: m.id === conn.model }, m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id)));
             modelSelect.classList.toggle('hidden', !models.length);
             setStatus('ok', `Connected · ${models.length} models available`);
+            cost.refresh(true);
         } catch (err) {
             setStatus('err', err.message);
         }
@@ -175,7 +181,8 @@ export async function render(body) {
             status,
             modelSelect,
             field('Model', modelInput, 'Type any model id, or connect to pick from the list.'),
-            modelList),
+            modelList,
+            cost.node),
         section('Profiles', profilesBox),
         section('', el('p', { class: 'hint' }, icon('lock'), ' API keys are stored on your Reverie server (data/secrets.json) and never sent back to the browser. On Railway you can also set them as environment variables, e.g. OPENROUTER_API_KEY.')));
     if (secrets[conn.provider] || conn.provider === 'custom') fetchModels();

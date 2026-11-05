@@ -15,6 +15,7 @@ import { initDialogueColors, openCastEditor } from './dialogue-colors.js';
 import { renderHome, bindHome } from './home.js';
 import { setFrameRpcHandler } from './render.js';
 import { initLayout } from './layout.js';
+import { enhanceDraft, bindEnhance } from './enhance.js';
 import { el, icon, toast, modal, toggleDrawer, closeAllDrawers, openDrawer, isMobile } from './ui.js';
 
 const $id = id => document.getElementById(id);
@@ -26,6 +27,7 @@ function coreActions() {
         ['comment-dots', 'Regenerate with a note…', () => import('./chat.js').then(m => m.regenerateWithNote())],
         ['forward', 'Continue', () => generate('continue')],
         ['user-pen', 'Write for me (impersonate)', () => generate('impersonate')],
+        ['feather-pointed', 'Enhance my reply', enhanceDraft],
         ['wand-magic-sparkles', 'Illustrate the scene', () => openImageStudio('scene')],
         ['image', 'Image studio', () => openImageStudio('free')],
         ['clapperboard', 'Previously on… (recap)', () => import('./recap.js').then(m => m.showRecap({ force: true }))],
@@ -138,12 +140,32 @@ function bindUi() {
         }
         ta.value = '';
         autoGrow();
-        localStorage.removeItem('rv-draft');
+        saveDraft('');
         await sendMessage(text);
+    };
+    // Each chat keeps its own unsent draft (so switching chats never loses what you were typing).
+    const draftKey = () => (state.character && state.chatId ? `rv-draft:${state.character.id}/${state.chatId}` : 'rv-draft:home');
+    let draftFor = draftKey();
+    const saveDraft = (text = ta.value) => {
+        try { if (text.trim()) localStorage.setItem(draftFor, text); else localStorage.removeItem(draftFor); } catch { /* storage full or blocked */ }
+    };
+    const loadDraft = () => {
+        draftFor = draftKey();
+        let text = '';
+        try { text = localStorage.getItem(draftFor) || ''; } catch { /* blocked */ }
+        ta.value = text;
+        autoGrow();
+        document.body.classList.toggle('has-draft', !!text.trim());
     };
     ta.addEventListener('input', () => {
         autoGrow();
-        localStorage.setItem('rv-draft', ta.value);
+        saveDraft();
+        document.body.classList.toggle('has-draft', !!ta.value.trim());
+    });
+    $id('btn-enhance').addEventListener('click', enhanceDraft);
+    bindEnhance();
+    eventSource.on(event_types.CHAT_CHANGED, () => {
+        if (draftKey() !== draftFor) loadDraft();
     });
     ta.addEventListener('keydown', e => {
         if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
@@ -152,7 +174,12 @@ function bindUi() {
         e.preventDefault();
         send();
     });
-    ta.value = localStorage.getItem('rv-draft') || '';
+    // The single draft older versions kept goes to the home screen once.
+    try {
+        const old = localStorage.getItem('rv-draft');
+        if (old) { localStorage.setItem('rv-draft:home', old); localStorage.removeItem('rv-draft'); }
+    } catch { /* blocked */ }
+    loadDraft();
     $id('send_but').addEventListener('click', send);
     $id('mes_stop').addEventListener('click', stopGeneration);
     $id('btn-continue').addEventListener('click', () => generate('continue'));
@@ -197,6 +224,8 @@ function showShortcuts() {
         [`${mod} K`, 'Search this chat (Enter / Shift+Enter: next / previous)'],
         [`${mod} Shift F`, 'Search all stories'],
         [`${mod} Enter`, 'Save while editing a message'],
+        [`${mod} Shift E`, 'Enhance your draft (in the message box)'],
+        [`${mod} Shift Z`, 'Undo the enhancement'],
         ['Esc', 'Close menus, panels and dialogs; stop reading aloud'],
         ['?', 'This list'],
     ];

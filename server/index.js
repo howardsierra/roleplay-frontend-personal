@@ -186,10 +186,12 @@ app.use('/api', (_req, res) => res.status(404).json({ error: 'Unknown API route'
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
-    const status = err.status || err.statusCode || 500;
+    // A missing file is "not found", and errors never show where your data folder is.
+    const status = err.status || err.statusCode || (err.code === 'ENOENT' ? 404 : 500);
     if (status >= 500) console.error(err);
     if (res.headersSent) return res.end();
-    res.status(status).json({ error: err.message || 'Server error' });
+    const message = err.code === 'ENOENT' ? 'Not found' : String(err.message || 'Server error').split(DATA_DIR).join('<data>');
+    res.status(status).json({ error: message });
 });
 
 app.listen(PORT, HOST, () => {

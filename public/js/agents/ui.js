@@ -7,10 +7,10 @@ import { points, pointsChanged } from '../rv-ext/points.js';
 import { agents, isOn, setOn, agentsOff, chatAgents, agentStore, agentConfig, agentSettings, saveAgentSettings, runNow } from './core.js';
 import {
     pushStory, formatPlot, applyContinuity, trackerState, trackerLocks, editTrackers, TRACKER_SECTIONS,
-    acceptLore, dismissLore,
+    acceptLore, dismissLore, bondsState, editBonds, milestoneFor, parseMilestones, BOND_RANGE,
 } from './builtin.js';
 
-const ORDER = ['director', 'plot', 'prose', 'continuity', 'trackers', 'cyoa', 'lorekeeper', 'echo'];
+const ORDER = ['director', 'plot', 'prose', 'continuity', 'trackers', 'bonds', 'cyoa', 'lorekeeper', 'echo'];
 const ordered = () => ORDER.map(id => agents.get(id)).filter(Boolean);
 
 // ---------------------------------------------------------------- Story tab
@@ -30,6 +30,7 @@ function renderStory(container) {
             el('button', { class: 'btn small ghost', onclick: () => import('../panels/settings.js').then(m => m.openSettings('agents')) }, icon('sliders'), 'Agent settings')),
         isOn('director') ? directorCard() : null,
         isOn('trackers') || trackerState().state ? trackersCard() : null,
+        isOn('bonds') || bondsState().state ? bondsCard() : null,
         isOn('plot') ? plotCard() : null,
         (agentStore('lorekeeper').pending || []).length ? loreCard() : null,
         anyOn ? modelsCard() : null,
@@ -119,6 +120,73 @@ function trackersCard() {
             el('button', { class: 'btn small', onclick: async () => { await runNow('trackers'); refresh(); } }, icon('rotate'), 'Update now'),
             el('span', { class: 'hint' }, t.at ? `Updated ${new Date(t.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Fills in after the next reply.')),
         ...sections);
+}
+
+function bondsCard() {
+    const b = bondsState().state || {};
+    const cfg = agentConfig('bonds');
+    const milestones = parseMilestones(cfg.milestones);
+    const store = agentStore('bonds');
+    store.locks ??= {};
+    const save = () => import('../state.js').then(m => m.saveChatDebounced());
+    const [lo, hi] = BOND_RANGE;
+    const pct = v => `${((v - lo) / (hi - lo)) * 100}%`;
+    const input = (value, onChange, attrs = {}) => {
+        const i = el('input', { class: 'input tracker-input', value: value ?? '', ...attrs });
+        i.addEventListener('change', () => onChange(i.value));
+        return i;
+    };
+    const bonds = Object.entries(b.bonds || {}).map(([name, x]) => {
+        const { reached, next } = milestoneFor(x.bond, milestones);
+        const locked = !!store.locks[name];
+        return el('div', { class: 'bond-row' },
+            el('div', { class: 'tracker-row-head' },
+                el('b', {}, name), el('span', { class: `score ${x.bond >= 0 ? 'pos' : 'neg'}` }, String(x.bond)),
+                el('span', { class: 'grow' }),
+                el('button', { class: 'icon-btn small', title: 'Lower the bond', onclick: () => editBonds(s => { s.bonds[name].bond = Math.max(lo, s.bonds[name].bond - 1); }) }, icon('minus')),
+                el('button', { class: 'icon-btn small', title: 'Raise the bond', onclick: () => editBonds(s => { s.bonds[name].bond = Math.min(hi, s.bonds[name].bond + 1); }) }, icon('plus')),
+                el('button', { class: `icon-btn small lock${locked ? ' on' : ''}`, title: locked ? 'Locked: the AI leaves this bond alone' : 'Lock this bond', onclick: () => { if (locked) delete store.locks[name]; else store.locks[name] = true; save(); refresh(); } }, icon(locked ? 'lock' : 'lock-open')),
+                el('button', { class: 'icon-btn small', title: 'Remove', onclick: () => editBonds(s => { delete s.bonds[name]; }) }, icon('xmark'))),
+            el('div', { class: 'bond-meter' },
+                el('div', { class: 'bond-fill', style: { width: pct(Math.max(lo, x.bond)) } }),
+                el('div', { class: 'bond-zero', style: { left: pct(0) } }),
+                ...milestones.filter(m => m.at > lo && m.at <= hi).map(m => el('div', { class: `bond-tick${x.bond >= m.at ? ' on' : ''}`, style: { left: pct(m.at) }, title: `${m.name} at ${m.at}` }))),
+            el('div', { class: 'hint' }, reached ? `Up to: ${reached.name}` : 'No milestone yet', next ? ` · next: ${next.name} at ${next.at}` : '',
+                x.grudge ? ` · grudge ${x.grudge}/4` : '', x.warmth ? ` · warmth ${x.warmth}/5` : '',
+                x.last?.length ? ` · last reply: ${x.last.join(', ')}` : ''));
+    });
+    const goals = Object.entries(b.goals || {}).map(([name, g]) => el('div', { class: 'tracker-row' },
+        el('div', { class: 'tracker-row-head' }, el('b', {}, name), g.of > 1 ? el('span', { class: 'hint' }, `step ${g.step} of ${g.of}`) : null, el('span', { class: 'grow' }),
+            el('button', { class: 'icon-btn small', title: 'Remove', onclick: () => editBonds(s => { delete s.goals[name]; }) }, icon('xmark'))),
+        el('div', { class: 'tracker-row-fields' },
+            el('label', { class: 'tracker-field' }, el('span', {}, 'goal'), input(g.goal, v => editBonds(s => { s.goals[name].goal = v; }))),
+            el('label', { class: 'tracker-field' }, el('span', {}, 'status'), input(g.status, v => editBonds(s => { s.goals[name].status = v; }))))));
+    const TYPES = [['secret', 'Secret'], ['thread', 'Open thread'], ['rule', 'Rule']];
+    const notes = (b.notes || []).map((n, i) => el('div', { class: `tracker-row note-${n.type}` },
+        el('div', { class: 'tracker-row-head' },
+            select(TYPES, n.type, v => editBonds(s => { s.notes[i].type = v; })),
+            el('span', { class: 'grow' }),
+            el('button', { class: `icon-btn small lock${n.pinned ? ' on' : ''}`, title: n.pinned ? 'Pinned: stays even if the AI drops it' : 'Pin this note', onclick: () => editBonds(s => { s.notes[i].pinned = !s.notes[i].pinned; }) }, icon('thumbtack')),
+            el('button', { class: 'icon-btn small', title: 'Remove', onclick: () => editBonds(s => { s.notes.splice(i, 1); }) }, icon('xmark'))),
+        el('div', { class: 'tracker-row-fields' },
+            el('label', { class: 'tracker-field wide' }, el('span', {}, 'note'), input(n.text, v => editBonds(s => { s.notes[i].text = v; }))),
+            n.type === 'secret' ? el('label', { class: 'tracker-field' }, el('span', {}, 'knows'), input((n.knows || []).join(', '), v => editBonds(s => { s.notes[i].knows = v.split(',').map(x => x.trim()).filter(Boolean); }))) : null,
+            n.type === 'secret' ? el('label', { class: 'tracker-field' }, el('span', {}, 'unaware'), input((n.unaware || []).join(', '), v => editBonds(s => { s.notes[i].unaware = v.split(',').map(x => x.trim()).filter(Boolean); }))) : null)));
+    return card('Bonds & secrets', 'heart-pulse',
+        el('div', { class: 'row gap wrap' },
+            el('button', { class: 'btn small', onclick: async () => { await runNow('bonds'); refresh(); } }, icon('rotate'), 'Update now'),
+            el('span', { class: 'hint' }, b.at ? `Updated ${new Date(b.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Fills in after the next reply.')),
+        el('div', { class: 'tracker-section' }, el('h5', {}, icon('heart'), 'Bonds with you'),
+            bonds.length ? bonds : el('p', { class: 'hint' }, 'Nobody yet: bonds start when a character and you share a moment.'),
+            el('button', { class: 'btn small ghost', onclick: async () => {
+                const { promptDialog } = await import('../ui.js');
+                const name = await promptDialog('Who?', '', { title: 'Add a bond', placeholder: state.character?.card?.data?.name || 'Name' });
+                if (name?.trim()) editBonds(s => { s.bonds ??= {}; s.bonds[name.trim()] ??= { bond: 0, warmth: 0, grudge: 0 }; });
+            } }, icon('plus'), 'Add')),
+        el('div', { class: 'tracker-section' }, el('h5', {}, icon('bullseye'), 'Goals'), goals.length ? goals : el('p', { class: 'hint' }, 'Nothing yet.')),
+        el('div', { class: 'tracker-section' }, el('h5', {}, icon('user-secret'), 'Secrets, threads & rules'),
+            notes.length ? notes : el('p', { class: 'hint' }, 'Nothing yet.'),
+            el('button', { class: 'btn small ghost', onclick: () => editBonds(s => { (s.notes ??= []).unshift({ type: 'secret', text: 'New secret', knows: [], unaware: [], pinned: true }); }) }, icon('plus'), 'Add')));
 }
 
 /**

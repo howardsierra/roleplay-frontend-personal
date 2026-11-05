@@ -4,6 +4,7 @@ import { api } from './api.js';
 import { buildPrompt, estimateTokens } from './prompt.js';
 import { el, icon, toast, modal } from './ui.js';
 import { leftOutView } from './left-out.js';
+import { costOf, money } from './pricing.js';
 
 // ---------------------------------------------------------------- captures
 // What was sent for the last few generations, newest last. Kept in memory only.
@@ -60,6 +61,9 @@ export function generationStats({ startedAt, firstTextAt, endedAt, usage, prompt
         cached: usage?.prompt_tokens_details?.cached_tokens ?? usage?.cache_read_input_tokens ?? undefined,
         estimated,
         requestId,
+        // OpenRouter reports what the call actually cost; otherwise it's worked out from the model's prices.
+        cost: Number.isFinite(Number(usage?.cost)) ? Number(usage.cost)
+            : costOf({ input, output, cached: usage?.prompt_tokens_details?.cached_tokens ?? usage?.cache_read_input_tokens ?? 0 }, state.settings.connection.model) ?? undefined,
     };
 }
 
@@ -89,6 +93,7 @@ export function renderGenDetails(node, mes, id, { streaming }) {
             stat('Out:', approx + fmtNum(gen.out)),
             stat('Total tok:', approx + fmtNum(gen.total)),
             gen.cached ? stat('Cached:', fmtNum(gen.cached)) : null,
+            gen.cost != null ? stat('Cost:', (gen.estimated ? '≈' : '') + money(gen.cost)) : null,
             el('button', { class: 'rv-gen-inspect', 'data-act': 'inspect', title: 'Open the Prompt Inspector for this reply' }, icon('magnifying-glass'), 'Inspect'),
         ) : null,
     ].filter(Boolean));
