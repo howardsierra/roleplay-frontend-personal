@@ -5,7 +5,7 @@ import { agents, agentSettings, agentConfig, saveAgentSettings } from '../agents
 import { TRACKER_SECTIONS, ECHO_STYLES } from '../agents/builtin.js';
 import { agentConnectionSelect } from '../agents/ui.js';
 
-const ORDER = ['director', 'plot', 'prose', 'continuity', 'trackers', 'cyoa', 'lorekeeper', 'echo'];
+const ORDER = ['director', 'plot', 'prose', 'continuity', 'trackers', 'bonds', 'cyoa', 'lorekeeper', 'echo'];
 
 export async function render(body) {
     const s = agentSettings();
@@ -43,6 +43,10 @@ export async function render(body) {
                 })),
                 toggle('Show the state to the AI every reply', cfg.inject, v => { cfg.inject = v; save(); }, 'Adds a short “current story state” section to the prompt so details stay consistent.'),
                 every('Update every … messages'));
+                break;
+            case 'bonds':
+                opts.push(field('Milestones', textInput(cfg.milestones, v => { cfg.milestones = v; save(); }, { placeholder: '2 hug, 5 holding hands, 8 kiss, 12 intimacy' }), 'Bond level, then what it allows, comma separated. Bonds run from -10 to 20.'),
+                    toggle('Tell the AI the bonds and secrets every reply', cfg.inject !== false, v => { cfg.inject = v; save(); }));
                 break;
             case 'cyoa': opts.push(slider('Number of choices', Number(cfg.count) || 4, { min: 2, max: 6, step: 1, onChange: v => { cfg.count = v; save(); } })); break;
             case 'lorekeeper':

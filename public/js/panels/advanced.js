@@ -1,4 +1,5 @@
 import { backupSection } from '../backup.js';
+import { enhanceSettingsSection } from '../enhance.js';
 import { api } from '../api.js';
 import { state, saveSettingsDebounced, chatMetadata, saveChat } from '../state.js';
 import { printMessages } from '../chat.js';
@@ -25,8 +26,11 @@ export async function render(body) {
             toggle('Prefer character main prompt', g.preferCharPrompt, v => { g.preferCharPrompt = v; save(); }, 'Use the card\'s system prompt instead of the preset\'s Main Prompt when it has one.'),
             toggle('Prefer character post-history instructions', g.preferCharInstructions, v => { g.preferCharInstructions = v; save(); }),
             toggle('Trim incomplete sentences', g.trimIncomplete, v => { g.trimIncomplete = v; save(); }),
+            toggle('Cheaper long chats', g.cacheFriendly !== false, v => { g.cacheFriendly = v; save(); }, 'When a chat outgrows the context, older messages are let go in one bigger step and the cut stays put for a while, so the provider can reuse its cached prompt (much cheaper on Claude, OpenRouter and others). Memories that change every turn go near the end.'),
+            g.cacheFriendly !== false ? slider('Room left after a cut (%)', Math.round((g.cacheSlack ?? 0.25) * 100), { min: 5, max: 60, step: 5, onChange: v => { g.cacheSlack = v / 100; save(); }, hint: 'More room means fewer cuts (more cache hits), but a little less history in each prompt.' }) : null,
             toggle('Ask what to change when regenerating', g.askOnRegenerate, v => { g.askOnRegenerate = v; save(); }, 'Otherwise, long-press (or right-click) the → arrow, or use “Regenerate with a note…” in the ⋯ and ✨ menus.')),
         thinkingSection(),
+        enhanceSettingsSection(),
         await voiceSection(),
         alertsSection(),
         section('Rich content',
