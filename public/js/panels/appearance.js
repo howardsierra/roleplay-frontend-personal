@@ -7,7 +7,7 @@ import { applyBranding } from '../layout.js';
 import { dialogueSettings, refreshDialogueColors, openCastEditor } from '../dialogue-colors.js';
 import { popMenu } from '../chat.js';
 import { VIEW_MODES, viewMode, setViewMode } from '../view-mode.js';
-import { el, icon, field, select, textArea, textInput, toggle, slider, section, toast, pickFile, download, confirmDialog, promptDialog, debounce } from '../ui.js';
+import { el, icon, field, select, textArea, textInput, toggle, slider, section, toast, modal, pickFile, download, confirmDialog, promptDialog, debounce } from '../ui.js';
 
 let rootBody;
 const rerender = () => {

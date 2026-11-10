@@ -64,6 +64,15 @@ async function upstreamError(res) {
     return httpError(upstreamStatus(res.status), `Provider returned ${res.status}${hint}: ${String(detail).slice(0, 800)}`);
 }
 
+// Per-token prices when the provider lists them (OpenRouter: pricing.prompt / completion / input_cache_read, in dollars).
+function priceOf(m) {
+    const p = m.pricing;
+    if (!p || typeof p !== 'object') return {};
+    const n = v => (v === undefined || v === null || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
+    const price = { in: n(p.prompt), out: n(p.completion), cacheRead: n(p.input_cache_read), request: n(p.request) };
+    return price.in === null && price.out === null ? {} : { price };
+}
+
 export async function listModels({ provider, baseUrl, key }) {
     const base = resolveBase(provider, baseUrl);
     const res = await fetch(`${base}/models${provider === 'anthropic' ? '?limit=1000' : ''}`, {
@@ -73,7 +82,7 @@ export async function listModels({ provider, baseUrl, key }) {
     const json = await res.json();
     const list = Array.isArray(json) ? json : (json.data || json.models || []);
     return list
-        .map(m => (typeof m === 'string' ? { id: m } : { id: m.id || m.name, name: m.display_name || m.name, context: m.context_length }))
+        .map(m => (typeof m === 'string' ? { id: m } : { id: m.id || m.name, name: m.display_name || m.name, context: m.context_length, ...priceOf(m) }))
         .filter(m => m.id)
         .map(m => ({ ...m, id: String(m.id).replace(/^models\//, '') }))
         .sort((a, b) => a.id.localeCompare(b.id));
@@ -145,6 +154,8 @@ function buildOpenAIBody(provider, model, messages, p, stream) {
         body.reasoning_effort = p.reasoning_effort;
     }
     if (stream && provider !== 'custom') body.stream_options = { include_usage: true };
+    // OpenRouter then reports what the call cost (usage.cost, in dollars).
+    if (provider === 'openrouter') body.usage = { include: true };
     return body;
 }
 

@@ -747,6 +747,7 @@ export async function generate(type = 'normal', { quietPrompt = '', quietToLoud 
                 await streamCompletion(body, { signal: controller.signal, onText: t => { text += t; ta.value = text; autoGrow(); } });
             } else text += (await completion(body, { signal: controller.signal })).text;
             ta.value = applyRegex(splitReasoning(text, { startsInside: endsInsideThinking(prefill) }).text.trim(), REGEX_PLACEMENT.USER_INPUT);
+            ta.dispatchEvent(new Event('input')); // keeps it as this chat's draft
             autoGrow();
             await eventSource.emit(event_types.IMPERSONATE_READY, ta.value);
             return ta.value;
